@@ -63,8 +63,8 @@ export default function createNote(option) {
         case 1:
             const inst = option.instrument;
             // Create custom waveform
-            var real = new Float32Array(samples[inst][0])
-            var imag = new Float32Array(samples[inst][1])
+            var real = samples[inst][0];
+            var imag = samples[inst][1];
             var customWaveform = this.context.createPeriodicWave(real, imag);
             oscillator.setPeriodicWave(customWaveform);
     }
