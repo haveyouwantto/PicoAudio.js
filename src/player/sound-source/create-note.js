@@ -1,4 +1,4 @@
-import { samples } from "./waves";
+import { samples, envelope } from "./waves";
 
 export default function createNote(option) {
     const note = this.createBaseNote(option, false, true, false, true); // oscillatorのstopはこちらで実行するよう指定
@@ -76,71 +76,86 @@ export default function createNote(option) {
     }
 
     // 減衰の設定 //
-    switch (this.channels[note.channel][1] / 10 || option.instrument) {
-        // ピッチカート系減衰
-        case 0.2:
-        case 12: case 13: case 45: case 55:
-            {
-                isPizzicato = true;
-                gainNode.gain.value *= 1.1;
-                gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
-                gainNode.gain.linearRampToValueAtTime(0.0, note.start + 0.2);
-                this.stopAudioNode(oscillator, note.start + 0.2, stopGainNode);
-                break;
+    switch (this.settings.soundQuality) {
+        case 0:
+            switch (this.channels[note.channel][1] / 10 || option.instrument) {
+                // ピッチカート系減衰
+                case 0.2:
+                case 12: case 13: case 45: case 55:
+                    {
+                        isPizzicato = true;
+                        gainNode.gain.value *= 1.1;
+                        gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
+                        gainNode.gain.linearRampToValueAtTime(0.0, note.start + 0.2);
+                        this.stopAudioNode(oscillator, note.start + 0.2, stopGainNode);
+                        break;
+                    }
+                // ピアノ程度に伸ばす系
+                case 0.3:
+                case 0: case 1: case 2: case 3: case 6: case 9: case 11: case 14: case 15:
+                case 32: case 36: case 37: case 46: case 47:
+                    {
+                        gainNode.gain.value *= 1.1;
+                        const decay = (128 - option.pitch) / 128;
+                        gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
+                        gainNode.gain.linearRampToValueAtTime(gainNode.gain.value * 0.85, note.start + decay * decay / 8);
+                        gainNode.gain.linearRampToValueAtTime(gainNode.gain.value * 0.8, note.start + decay * decay / 4);
+                        gainNode.gain.setTargetAtTime(0, note.start + decay * decay / 4, 5 * decay * decay);
+                        this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
+                        break;
+                    }
+                // ギター系
+                case 0.4:
+                case 24: case 25: case 26: case 27: case 28: case 29: case 30: case 31: case 34:
+                    {
+                        gainNode.gain.value *= 1.1;
+                        gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
+                        gainNode.gain.linearRampToValueAtTime(0.0, note.start + 1.0 + note.velocity * 4);
+                        this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
+                        break;
+                    }
+                // 減衰していくけど終わらない系
+                case 0.5:
+                case 4: case 5: case 7: case 8: case 10: case 33: case 35:
+                    {
+                        gainNode.gain.value *= 1.0;
+                        gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
+                        gainNode.gain.linearRampToValueAtTime(gainNode.gain.value * 0.95, note.start + 0.1);
+                        gainNode.gain.setValueAtTime(gainNode.gain.value * 0.95, note.start + 0.1);
+                        gainNode.gain.linearRampToValueAtTime(0.0, note.start + 2.0 + note.velocity * 10);
+                        this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
+                        break;
+                    }
+                case 119: // Reverse Cymbal
+                    {
+                        gainNode.gain.value = 0;
+                        this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
+                        note2 = this.createBaseNote(option, true, true);
+                        if (note2.isGainValueZero) break;
+                        note2.oscillator.playbackRate.setValueAtTime((option.pitch + 1) / 128, note.start);
+                        note2.gainNode.gain.setValueAtTime(0, note.start);
+                        note2.gainNode.gain.linearRampToValueAtTime(1.3, note.start + 2);
+                        this.stopAudioNode(note2.oscillator, note.stop, note2.stopGainNode);
+                        break;
+                    }
+                default: {
+                    gainNode.gain.value *= 1.1;
+                    gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
+                    this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
+                }
             }
-        // ピアノ程度に伸ばす系
-        case 0.3:
-        case 0: case 1: case 2: case 3: case 6: case 9: case 11: case 14: case 15:
-        case 32: case 36: case 37: case 46: case 47:
-            {
-                gainNode.gain.value *= 1.1;
-                const decay = (128 - option.pitch) / 128;
-                gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
-                gainNode.gain.linearRampToValueAtTime(gainNode.gain.value * 0.85, note.start + decay * decay / 8);
-                gainNode.gain.linearRampToValueAtTime(gainNode.gain.value * 0.8, note.start + decay * decay / 4);
-                gainNode.gain.setTargetAtTime(0, note.start + decay * decay / 4, 5 * decay * decay);
-                this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
-                break;
-            }
-        // ギター系
-        case 0.4:
-        case 24: case 25: case 26: case 27: case 28: case 29: case 30: case 31: case 34:
-            {
-                gainNode.gain.value *= 1.1;
-                gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
-                gainNode.gain.linearRampToValueAtTime(0.0, note.start + 1.0 + note.velocity * 4);
-                this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
-                break;
-            }
-        // 減衰していくけど終わらない系
-        case 0.5:
-        case 4: case 5: case 7: case 8: case 10: case 33: case 35:
-            {
-                gainNode.gain.value *= 1.0;
-                gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
-                gainNode.gain.linearRampToValueAtTime(gainNode.gain.value * 0.95, note.start + 0.1);
-                gainNode.gain.setValueAtTime(gainNode.gain.value * 0.95, note.start + 0.1);
-                gainNode.gain.linearRampToValueAtTime(0.0, note.start + 2.0 + note.velocity * 10);
-                this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
-                break;
-            }
-        case 119: // Reverse Cymbal
-            {
-                gainNode.gain.value = 0;
-                this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
-                note2 = this.createBaseNote(option, true, true);
-                if (note2.isGainValueZero) break;
-                note2.oscillator.playbackRate.setValueAtTime((option.pitch + 1) / 128, note.start);
-                note2.gainNode.gain.setValueAtTime(0, note.start);
-                note2.gainNode.gain.linearRampToValueAtTime(1.3, note.start + 2);
-                this.stopAudioNode(note2.oscillator, note.stop, note2.stopGainNode);
-                break;
-            }
-        default: {
-            gainNode.gain.value *= 1.1;
-            gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
-            this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
-        }
+            break;
+        case 1:
+            // Apply envelope to note
+            let instEnvelope = envelope[option.instrument];
+            let attack = instEnvelope[0], sustain = instEnvelope[1], release = instEnvelope[2];
+            let velocity = gainNode.gain.value *= 1.1;
+
+            gainNode.gain.value = 0;
+            gainNode.gain.linearRampToValueAtTime(velocity, note.start + attack);       // Attack
+            gainNode.gain.linearRampToValueAtTime(velocity * sustain, note.stop);       // Sustain
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, note.stop + release);    // Release
+            this.stopAudioNode(oscillator, note.stop + release, stopGainNode, isNoiseCut);
     }
 
     // 音をストップさせる関数を返す //
