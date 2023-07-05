@@ -149,15 +149,14 @@ export default function createNote(option) {
             // Apply envelope to note
             let instEnvelope = envelope[option.instrument];
             let attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-            let velocity = gainNode.gain.value *= 1.1;
-            let noteDuration = note.stop - note.start;
-            let sustainValue = (noteDuration > decay) ? sustain : 1 - ((1 - sustain) * noteDuration);
+            let velocity = gainNode.gain.value * 1.1;
 
+            gainNode.gain.setValueAtTime(0, note.start);
             // Attack phase
-            gainNode.gain.linearRampToValueAtTime(velocity, note.start + attack);
+            gainNode.gain.setTargetAtTime(velocity, note.start, attack / 8);
 
             // Decay phase
-            gainNode.gain.setTargetAtTime(velocity * sustainValue, note.start + attack, decay / 3);
+            gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attack, decay / 3);
 
             // Sustain phase (no explicit scheduling needed)
 
