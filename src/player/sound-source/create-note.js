@@ -148,13 +148,16 @@ export default function createNote(option) {
         case 1:
             // Apply envelope to note
             let instEnvelope = envelope[option.instrument];
-            let attack = instEnvelope[0], sustain = instEnvelope[1], release = instEnvelope[2];
+            let attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[2];
             let velocity = gainNode.gain.value *= 1.1;
+            let noteDuration = note.stop - note.start;
+            let sustainValue = (noteDuration > decay) ? sustain : 1 - ((1 - sustain) * noteDuration);
+            let sustainTime = (noteDuration > decay) ? note.start + decay : note.stop;
 
             gainNode.gain.value = 0;
-            gainNode.gain.linearRampToValueAtTime(velocity, note.start + attack);       // Attack
-            gainNode.gain.linearRampToValueAtTime(velocity * sustain, note.stop);       // Sustain
-            gainNode.gain.exponentialRampToValueAtTime(0.0001, note.stop + release);    // Release
+            gainNode.gain.linearRampToValueAtTime(velocity, note.start + attack);               // Attack
+            gainNode.gain.linearRampToValueAtTime(velocity * sustainValue, sustainTime);        // Sustain
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, note.stop + release);            // Release
             this.stopAudioNode(oscillator, note.stop + release, stopGainNode, isNoiseCut);
     }
 
