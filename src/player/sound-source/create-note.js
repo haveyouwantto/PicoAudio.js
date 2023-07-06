@@ -1,4 +1,4 @@
-import { samples, envelope } from "./waves";
+import { getWave, envelope } from "./waves";
 
 export default function createNote(option) {
     const note = this.createBaseNote(option, false, true, false, true); // oscillatorのstopはこちらで実行するよう指定
@@ -61,12 +61,7 @@ export default function createNote(option) {
             break;
 
         case 1:
-            const inst = option.instrument;
-            // Create custom waveform
-            var real = samples[inst][0];
-            var imag = samples[inst][1];
-            var customWaveform = this.context.createPeriodicWave(real, imag);
-            oscillator.setPeriodicWave(customWaveform);
+            oscillator.setPeriodicWave(getWave(this.context, option.instrument));
     }
 
     // 音の終わりのプチプチノイズが気になるので、音の終わりに5ms減衰してノイズ軽減 //
@@ -148,7 +143,7 @@ export default function createNote(option) {
         case 1:
             // Apply envelope to note
             let instEnvelope = envelope[option.instrument];
-            let attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
+            const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
             let velocity = gainNode.gain.value * 1.1;
 
             gainNode.gain.setValueAtTime(0, note.start);
