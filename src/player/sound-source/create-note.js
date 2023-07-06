@@ -146,17 +146,18 @@ export default function createNote(option) {
             const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
             let velocity = gainNode.gain.value * 1.1;
             const isPluck = sustain < 0.3;
+            const attackClamped = Math.max(attack, 0.001);
 
             gainNode.gain.setValueAtTime(0, note.start);
             // Attack phase
-            gainNode.gain.setTargetAtTime(velocity, note.start, attack / 8);
+            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 8);
 
             // Decay phase
             if (isPluck) {
                 const decayTime = decay * ((128 - option.pitch) / 64);
-                gainNode.gain.setTargetAtTime(0, note.start + attack, decayTime / 2);
+                gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
             } else {
-                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attack, decay / 2);
+                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
             }
 
             // Sustain phase (no explicit scheduling needed)
