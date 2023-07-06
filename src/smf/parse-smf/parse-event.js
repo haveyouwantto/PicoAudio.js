@@ -356,7 +356,7 @@ export default function parseEvent(info) {
 
     // WebMIDI用のMIDIメッセージを作成 //
     const messages = [];
-    if (this.settings.isWebMIDI) {
+    if (this.settings.isWebMIDI || this.settings.preserveSmfData) {
         const channel = channels[16];
         let tempo = 120;
         let tempoCurTick = 0;
@@ -397,7 +397,7 @@ export default function parseEvent(info) {
     info.lastNoteOffTime = lastNoteOffTime;
     info.lastEventTiming = lastEventTiming;
     info.lastEventTime = lastEventTime;
-    if (this.settings.isWebMIDI) {
+    if (this.settings.isWebMIDI || this.settings.preserveSmfData) {
         info.messages = messages;
         info.smfData = new Uint8Array(smf); // lastStateを上書きしたsmfをコピー
     }

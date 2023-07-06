@@ -144,7 +144,7 @@ export default function createNote(option) {
             // Apply envelope to note
             let instEnvelope = envelope[option.instrument];
             const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-            let velocity = gainNode.gain.value * 1.1;
+            let velocity = gainNode.gain.value * 1.2;
             const isPluck = sustain < 0.3;
             const attackClamped = Math.max(attack, 0.001);
 
