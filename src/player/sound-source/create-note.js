@@ -145,20 +145,27 @@ export default function createNote(option) {
             let instEnvelope = envelope[option.instrument];
             const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
             let velocity = gainNode.gain.value * 1.1;
+            const isPluck = sustain < 0.3;
 
             gainNode.gain.setValueAtTime(0, note.start);
             // Attack phase
             gainNode.gain.setTargetAtTime(velocity, note.start, attack / 8);
 
             // Decay phase
-            gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attack, decay / 3);
+            if (isPluck) {
+                const decayTime = decay * ((128 - option.pitch) / 64);
+                gainNode.gain.setTargetAtTime(0, note.start + attack, decayTime / 2);
+            } else {
+                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attack, decay / 2);
+            }
 
             // Sustain phase (no explicit scheduling needed)
 
             // Release phase
-            gainNode.gain.setTargetAtTime(0, note.stop, release / 3);
+            const releaseClamped = Math.min(release, 0.25);
+            gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
 
-            this.stopAudioNode(oscillator, note.stop + release, stopGainNode, isNoiseCut);
+            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
     }
 
     // 音をストップさせる関数を返す //
