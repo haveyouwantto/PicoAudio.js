@@ -17,6 +17,9 @@ export default function init(argsObj) {
     this.masterGainNode = this.context.createGain();
     this.masterGainNode.gain.value = this.settings.masterVolume;
 
+    // Add a dynamics compressor to prevent overloading
+    this.compressor = this.context.createDynamicsCompressor();
+
     // 仮想サンプルレート //
     const sampleRate = this.context.sampleRate;
     const sampleRateVT = sampleRate >= 48000 ? 48000 : sampleRate;
@@ -83,7 +86,8 @@ export default function init(argsObj) {
     this.convolverGainNode.gain.value = this.settings.reverbVolume;
     this.convolver.connect(this.convolverGainNode);
     this.convolverGainNode.connect(this.masterGainNode);
-    this.masterGainNode.connect(this.context.destination);
+    this.masterGainNode.connect(this.compressor);
+    this.compressor.connect(this.context.destination);
 
     // コーラス用のAudioNode作成・接続 //
     this.chorusDelayNode = this.context.createDelay();
@@ -98,7 +102,7 @@ export default function init(argsObj) {
     this.chorusLfoGainNode.connect(this.chorusDelayNode.delayTime);
     this.chorusDelayNode.connect(this.chorusGainNode);
     this.chorusGainNode.connect(this.masterGainNode);
-    this.masterGainNode.connect(this.context.destination);
+    // this.masterGainNode.connect(this.context.destination);
     this.chorusOscillator.start(0);
 
     // レイテンシの設定 //

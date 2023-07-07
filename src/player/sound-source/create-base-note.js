@@ -131,7 +131,7 @@ export default function createBaseNote(option, isDrum, isExpression, nonChannel,
     expGainNode.connect(gainNode);
     gainNode.connect(stopGainNode);
     stopGainNode.connect(this.masterGainNode);
-    this.masterGainNode.connect(context.destination);
+    // this.masterGainNode.connect(context.destination);
 
     // モジュレーションの変動を設定 //
     let modulationOscillator;
