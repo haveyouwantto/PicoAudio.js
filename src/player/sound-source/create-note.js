@@ -146,11 +146,11 @@ export default function createNote(option) {
             const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
             let velocity = gainNode.gain.value * 1.2;
             const isPluck = sustain < 0.3;
-            const attackClamped = Math.max(attack, 0.001);
+            const attackClamped = Math.max(attack, 0.0005);
 
             gainNode.gain.setValueAtTime(0, note.start);
             // Attack phase
-            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 8);
+            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
 
             // Decay phase
             if (isPluck) {
