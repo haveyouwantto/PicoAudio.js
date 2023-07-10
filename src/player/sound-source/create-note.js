@@ -1,4 +1,4 @@
-import { getWave, envelope } from "./waves";
+import { getWave, envelope, quickfadeArray } from "./waves";
 
 export default function createNote(option) {
     const note = this.createBaseNote(option, false, true, false, true); // oscillatorのstopはこちらで実行するよう指定
@@ -145,7 +145,7 @@ export default function createNote(option) {
             let instEnvelope = envelope[option.instrument];
             const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
             let velocity = gainNode.gain.value * 1.2;
-            const isPluck = sustain < 0.3;
+            const isPluck = quickfadeArray[option.instrument];
             const attackClamped = Math.max(attack, 0.001);
 
             gainNode.gain.setValueAtTime(0, note.start);
