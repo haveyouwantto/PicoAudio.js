@@ -95,13 +95,13 @@ const quickfadeArray = [
   false,  // 79: Ocarina
   // Synth Lead
   false,   // 80: Lead 1 (square)
-  true,   // 81: Lead 2 (sawtooth)
-  true,   // 82: Lead 3 (calliope)
-  true,   // 83: Lead 4 (chiff)
-  true,   // 84: Lead 5 (charang)
-  true,   // 85: Lead 6 (voice)
-  true,   // 86: Lead 7 (fifths)
-  true,   // 87: Lead 8 (bass + lead)
+  false,   // 81: Lead 2 (sawtooth)
+  false,   // 82: Lead 3 (calliope)
+  false,   // 83: Lead 4 (chiff)
+  false,   // 84: Lead 5 (charang)
+  false,   // 85: Lead 6 (voice)
+  false,   // 86: Lead 7 (fifths)
+  false,   // 87: Lead 8 (bass + lead)
   // Synth Pad
   false,  // 88: Pad 1 (new age)
   false,  // 89: Pad 2 (warm)
