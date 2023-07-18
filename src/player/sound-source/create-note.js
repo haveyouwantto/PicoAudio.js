@@ -61,7 +61,18 @@ export default function createNote(option) {
             break;
 
         case 1:
-            oscillator.setPeriodicWave(getWave(this.context, option.instrument));
+            switch (option.instrument) {
+                // Use exact representations of square and sawtooth waves
+                case 80:
+                    oscillator.type = "square";
+                    break;
+                case 81:
+                    oscillator.type = "sawtooth";
+                    break;
+                // Otherwise use periodic waves
+                default:
+                    oscillator.setPeriodicWave(getWave(this.context, option.instrument));
+            }
     }
 
     // 音の終わりのプチプチノイズが気になるので、音の終わりに5ms減衰してノイズ軽減 //
@@ -141,32 +152,41 @@ export default function createNote(option) {
             }
             break;
         case 1:
-            // Apply envelope to note
-            let instEnvelope = envelope[option.instrument];
-            const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-            let velocity = gainNode.gain.value * 1.2;
-            const isPluck = quickfadeArray[option.instrument];
-            const attackClamped = Math.max(attack, 0.001);
+            switch (option.instrument) {
+                case 80:
+                case 81:
+                    gainNode.gain.value *= 1.1;
+                    gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
+                    this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
+                    break;
+                default:
+                    // Apply envelope to note
+                    let instEnvelope = envelope[option.instrument];
+                    const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
+                    let velocity = gainNode.gain.value * 1.2;
+                    const isPluck = quickfadeArray[option.instrument];
+                    const attackClamped = Math.max(attack, 0.001);
 
-            gainNode.gain.setValueAtTime(0, note.start);
-            // Attack phase
-            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
+                    gainNode.gain.setValueAtTime(0, note.start);
+                    // Attack phase
+                    gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
 
-            // Decay phase
-            if (isPluck) {
-                const decayTime = decay * ((128 - option.pitch) / 64);
-                gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
-            } else {
-                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
+                    // Decay phase
+                    if (isPluck) {
+                        const decayTime = decay * ((128 - option.pitch) / 64);
+                        gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
+                    } else {
+                        gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
+                    }
+
+                    // Sustain phase (no explicit scheduling needed)
+
+                    // Release phase
+                    const releaseClamped = Math.min(release, 0.25);
+                    gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
+
+                    this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
             }
-
-            // Sustain phase (no explicit scheduling needed)
-
-            // Release phase
-            const releaseClamped = Math.min(release, 0.25);
-            gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
-
-            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
     }
 
     // 音をストップさせる関数を返す //
