@@ -1,5 +1,5 @@
 import UpdateNote from './play/update-note.js';
-import {Number_MAX_SAFE_INTEGER} from '../util/ponyfill.js';
+import { Number_MAX_SAFE_INTEGER } from '../util/ponyfill.js';
 
 export default function play(isSongLooping) {
     const context = this.context;
@@ -8,7 +8,7 @@ export default function play(isSongLooping) {
     const states = this.states;
 
     // Chrome Audio Policy 対策 //
-    if (context.resume) context.resume();
+    if (context.resume && !context instanceof OfflineAudioContext) context.resume();
 
     // 再生中の場合、処理しない //
     if (states.isPlaying) return;
@@ -20,7 +20,7 @@ export default function play(isSongLooping) {
             if (states.webMIDIWaitState != "waiting") { // play()連打の対策
                 // stop()から1000ms後にplay()を実行
                 states.webMIDIWaitState = "waiting";
-                let waitTime = settings.WebMIDIWaitTime - (context.currentTime - states.webMIDIStopTime)*1000;
+                let waitTime = settings.WebMIDIWaitTime - (context.currentTime - states.webMIDIStopTime) * 1000;
                 if (states.webMIDIStopTime == 0) waitTime = settings.WebMIDIWaitTime; // MIDI Portをopenして最初に呼び出すときも少し待つ
                 setTimeout(() => {
                     states.webMIDIWaitState = "completed";
