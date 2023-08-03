@@ -92,3 +92,35 @@ export default function play(isSongLooping) {
         stopFunc: () => { clearInterval(reserve); }
     });
 }
+
+export function render() {
+    const spanDuration = 5;
+    const notes = []
+    for (let channel of this.playData.channels) {
+        for (let note of channel.notes) {
+            notes.push(note)
+        }
+    }
+
+    const renderTime = (start) => {
+        notes.filter(note => note.startTime > start && note.startTime - start <= spanDuration)
+            .forEach(note => note.channel != 9 ? this.createNote(note) : this.createPercussionNote(note))
+    }
+    renderTime(0);
+
+    this.context.suspend(spanDuration);
+
+    this.context.onstatechange = (event) => {
+        if (this.context.state === 'suspended') {
+            renderTime(this.context.currentTime)
+            this.context.resume()
+            try {
+                this.context.suspend(this.context.currentTime + spanDuration);
+            } catch (e) {
+                console.warn(e)
+            }
+        }
+    }
+
+    return this.context.startRendering()
+}

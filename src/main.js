@@ -3,7 +3,7 @@ import init from './init/init.js';
 
 import setData from './player/set-data.js';
 import initStatus from './player/init-status.js';
-import play from './player/play.js';
+import play, { render } from './player/play.js';
 import stop from './player/stop.js';
 
 import createBaseNote from './player/sound-source/create-base-note.js';
@@ -235,6 +235,10 @@ class PicoAudio {
     setChorus(enable) { this.settings.isChorus = enable; }
     getChorusVolume() { return this.settings.chorusVolume; }
     setChorusVolume(volume) { this.settings.chorusVolume = volume; }
+
+    render(){
+        return render.call(this)
+    }
 }
 
 export default PicoAudio;
