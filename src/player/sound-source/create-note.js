@@ -65,6 +65,7 @@ export default function createNote(option) {
                 // Use exact representations of square and sawtooth waves
                 case 80:
                     oscillator.type = "square";
+                    gainNode.gain.value *= 0.8;
                     break;
                 case 81:
                     oscillator.type = "sawtooth";
@@ -155,7 +156,7 @@ export default function createNote(option) {
             switch (option.instrument) {
                 case 80:
                 case 81:
-                    gainNode.gain.value *= 1.1;
+                    gainNode.gain.value *= 1.2;
                     gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
                     this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
                     break;
