@@ -114,11 +114,7 @@ export function render() {
         if (this.context.state === 'suspended') {
             renderTime(this.context.currentTime)
             this.context.resume()
-            try {
-                this.context.suspend(this.context.currentTime + spanDuration);
-            } catch (e) {
-                console.warn(e)
-            }
+            this.context.suspend(this.context.currentTime + spanDuration).catch(e => console.warn(e));
         }
     }
 
