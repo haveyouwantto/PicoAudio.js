@@ -93,26 +93,31 @@ export default function play(isSongLooping) {
     });
 }
 
-export function render() {
-    const spanDuration = 5;
+export function render(spanDuration = 2) {
     const notes = []
+    let index = 0;
     for (let channel of this.playData.channels) {
         for (let note of channel.notes) {
             notes.push(note)
         }
     }
+    notes.sort((n1, n2) => n1.start - n2.start)
 
-    const renderTime = (start) => {
-        notes.filter(note => note.startTime > start && note.startTime - start <= spanDuration)
-            .forEach(note => note.channel != 9 ? this.createNote(note) : this.createPercussionNote(note))
+    const startRender = () => {
+        let note = notes[index];
+        do {
+            note = notes[index];
+            if (note) note.channel != 9 ? this.createNote(note) : this.createPercussionNote(note)
+            index++;
+        } while (index < notes.length && note.startTime - this.context.currentTime <= spanDuration)
     }
-    renderTime(0);
+    startRender();
 
     this.context.suspend(spanDuration);
 
     this.context.onstatechange = (event) => {
         if (this.context.state === 'suspended') {
-            renderTime(this.context.currentTime)
+            startRender()
             this.context.resume()
             this.context.suspend(this.context.currentTime + spanDuration).catch(e => console.warn(e));
         }
