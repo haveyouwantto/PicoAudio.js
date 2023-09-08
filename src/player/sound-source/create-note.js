@@ -156,7 +156,7 @@ export default function createNote(option) {
             switch (option.instrument) {
                 case 80:
                 case 81:
-                    gainNode.gain.value *= 1.2;
+                    gainNode.gain.value *= 1.1;
                     gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
                     this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
                     break;
@@ -164,7 +164,7 @@ export default function createNote(option) {
                     // Apply envelope to note
                     let instEnvelope = envelope[option.instrument];
                     const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-                    let velocity = gainNode.gain.value * 1.2;
+                    let velocity = gainNode.gain.value * 1.3;
                     const isPluck = quickfadeArray[option.instrument];
                     const attackClamped = Math.max(attack, 0.001);
 
