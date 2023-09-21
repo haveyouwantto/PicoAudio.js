@@ -87,8 +87,6 @@ export default function init(argsObj) {
     this.convolverGainNode.gain.value = this.settings.reverbVolume;
     this.convolver.connect(this.convolverGainNode);
     this.convolverGainNode.connect(this.masterGainNode);
-    this.masterGainNode.connect(this.compressor);
-    this.compressor.connect(this.context.destination);
 
     // コーラス用のAudioNode作成・接続 //
     this.chorusDelayNode = this.context.createDelay();
@@ -105,6 +103,8 @@ export default function init(argsObj) {
     this.chorusGainNode.connect(this.masterGainNode);
     // this.masterGainNode.connect(this.context.destination);
     this.chorusOscillator.start(0);
+
+    this.setGlobalReverb(this.settings.globalReverb);
 
     // レイテンシの設定 //
     this.baseLatency = this.context.baseLatency || this.baseLatency;

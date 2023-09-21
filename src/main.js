@@ -161,7 +161,7 @@ class PicoAudio {
     // インターフェース関係 //
     addEventListener(type, func) {
         // type = EventName (play, stop, noteOn, noteOff, songEnd)
-        this.events.push({type: type, func: func});
+        this.events.push({ type: type, func: func });
     }
     removeEventListener(type, func) {
         for (let i = this.events.length; i >= 0; i--) {
@@ -182,7 +182,7 @@ class PicoAudio {
             if (event.type == type) {
                 try {
                     event.func(option);
-                } catch(e) {
+                } catch (e) {
                     console.log(e);
                 }
             }
@@ -210,8 +210,8 @@ class PicoAudio {
         });
     }
     initChannels() {
-        for (let i=0; i<16; i++) {
-            this.channels[i] = [0,0,1];
+        for (let i = 0; i < 16; i++) {
+            this.channels[i] = [0, 0, 1];
         }
     }
     getMasterVolume() { return this.settings.masterVolume; }
@@ -236,8 +236,49 @@ class PicoAudio {
     getChorusVolume() { return this.settings.chorusVolume; }
     setChorusVolume(volume) { this.settings.chorusVolume = volume; }
 
-    render(){
+    render() {
         return render.call(this)
+    }
+
+    createReverbBuffer() {
+        var len = this.context.sampleRate * 0.25
+        var reverbBuffer = this.context.createBuffer(2, len, this.context.sampleRate);
+        var ch1 = reverbBuffer.getChannelData(0);
+        var ch2 = reverbBuffer.getChannelData(1);
+
+        const unit = 1 / len;
+        let area = 0;
+
+        for (let i = 0; i < len; i++) {
+            let fade_factor = Math.pow(10, -(i * unit * 2))
+            ch1[i] = (Math.random() - 0.5) * fade_factor;
+            ch2[i] = (Math.random() - 0.5) * fade_factor;
+            area += Math.abs(ch1[i]) * unit
+        }
+
+        return {
+            "buffer": reverbBuffer,
+            "area": area
+        }
+    }
+
+    setGlobalReverb(value) {
+        if (value) {
+            this.convolver2 = this.context.createConvolver();
+            var buffer = this.createReverbBuffer();
+            this.convolver2.buffer = buffer.buffer;
+            this.convolverGainNode2 = this.context.createGain();
+            this.convolverGainNode2.gain.value = 0.5 / buffer.area;
+            this.convolver2.connect(this.convolverGainNode2);
+
+            this.masterGainNode.connect(this.convolver2);
+            this.convolverGainNode2.connect(this.compressor);
+        } else {
+            this.masterGainNode.disconnect(this.convolver2);
+            this.masterGainNode.connect(this.compressor);
+        }
+        this.settings.globalReverb = value;
+        this.compressor.connect(this.context.destination);
     }
 }
 
