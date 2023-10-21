@@ -93,7 +93,7 @@ export default function play(isSongLooping) {
     });
 }
 
-export function render(spanDuration = 2) {
+export function render(spanDuration = 0.125) {
     const notes = []
     let index = 0;
     for (let channel of this.playData.channels) {
