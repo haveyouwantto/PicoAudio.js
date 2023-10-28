@@ -1,7 +1,9 @@
+import Soundbank from "./soundbank";
 import { getWave, envelope, quickfadeArray } from "./waves";
 
 export default function createNote(option) {
-    const note = this.createBaseNote(option, false, true, false, true); // oscillatorのstopはこちらで実行するよう指定
+    const isBuffer = this.settings.soundQuality == 3;
+    const note = this.createBaseNote(option, isBuffer, true, false, true); // oscillatorのstopはこちらで実行するよう指定
     if (note.isGainValueZero) return null;
 
     const oscillator = note.oscillator;
@@ -74,6 +76,15 @@ export default function createNote(option) {
                 default:
                     oscillator.setPeriodicWave(getWave(this.context, option.instrument));
             }
+            break;
+
+        case 3:
+            oscillator.loop = false;
+            const inst = this.soundbank.get(option.instrument, option.pitch);
+            console.log(inst)
+            oscillator.buffer = inst;
+            // oscillator.detune.value = (option.pitch - 79) * 100;
+            break;
     }
 
     // 音の終わりのプチプチノイズが気になるので、音の終わりに5ms減衰してノイズ軽減 //
@@ -188,6 +199,21 @@ export default function createNote(option) {
 
                     this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
             }
+            break;
+
+        case 3:
+            gainNode.gain.value *= 1.3;
+
+            // Apply envelope to note
+            let instEnvelope = envelope[option.instrument];
+            const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
+            let velocity = gainNode.gain.value * 1.3;
+            const isPluck = quickfadeArray[option.instrument];
+            const attackClamped = Math.max(attack, 0.001);
+            const releaseClamped = Math.min(release, 0.25);
+
+            gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
+            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
     }
 
     // 音をストップさせる関数を返す //

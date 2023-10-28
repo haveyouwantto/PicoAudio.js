@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+message Envelope {
+  float attack = 1;
+  float decay = 2;
+  float sustain = 3;
+  float release = 4;
+}
+
+message Zone {
+  int32 min_pitch = 1;
+  int32 max_pitch = 2;
+  int32 min_velocity = 3;
+  int32 max_velocity = 4;
+  Envelope envelope = 5;
+  bytes sample = 6;
+}
+
+message Instrument {
+  int32 midi_program_num = 1;
+  int32 bank_num = 2;
+  bool loop = 3;
+  repeated Zone zones = 4;
+}
+
+message SimpleSoundFont {
+  repeated Instrument instruments = 1;
+}

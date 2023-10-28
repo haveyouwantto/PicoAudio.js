@@ -3,6 +3,7 @@ export default function createPercussionNote(option) {
     if (note.isGainValueZero) return null;
 
     const source = note.oscillator;
+    source.buffer = this.whitenoise;
     const gainNode = note.gainNode;
     const stopGainNode = note.stopGainNode;
     let start = note.start;

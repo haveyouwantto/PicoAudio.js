@@ -44,5 +44,8 @@
     "rollup-plugin-serve": "^1.0.3",
     "rollup-plugin-terser": "^7.0.0"
   },
-  "dependencies": {}
+  "dependencies": {
+    "protobufjs": "^7.2.5",
+    "protobufjs-cli": "^1.1.2"
+  }
 }
