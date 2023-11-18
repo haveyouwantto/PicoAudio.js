@@ -240,41 +240,28 @@ class PicoAudio {
         return render.call(this)
     }
 
-    createReverbBuffer() {
-        var len = this.context.sampleRate * 0.25
-        var reverbBuffer = this.context.createBuffer(2, len, this.context.sampleRate);
-        var ch1 = reverbBuffer.getChannelData(0);
-        var ch2 = reverbBuffer.getChannelData(1);
-
-        const unit = 1 / len;
-        let area = 0;
-
-        for (let i = 0; i < len; i++) {
-            let fade_factor = Math.pow(10, -(i * unit * 2))
-            ch1[i] = (Math.random() - 0.5) * fade_factor;
-            ch2[i] = (Math.random() - 0.5) * fade_factor;
-            area += Math.abs(ch1[i]) * unit
-        }
-
-        return {
-            "buffer": reverbBuffer,
-            "area": area
-        }
-    }
-
     setGlobalReverb(value) {
         if (value) {
-            this.convolver2 = this.context.createConvolver();
-            var buffer = this.createReverbBuffer();
-            this.convolver2.buffer = buffer.buffer;
-            this.convolverGainNode2 = this.context.createGain();
-            this.convolverGainNode2.gain.value = 0.5 / buffer.area;
-            this.convolver2.connect(this.convolverGainNode2);
+            this.leftPanner = this.context.createStereoPanner();
+            this.rightPanner = this.context.createStereoPanner();
+            this.afterGain = this.context.createGain();
 
-            this.masterGainNode.connect(this.convolver2);
-            this.convolverGainNode2.connect(this.compressor);
+            this.leftPanner.connect(this.afterGain);
+            this.rightPanner.connect(this.afterGain);
+            this.leftPanner.pan.value = -1;
+            this.rightPanner.pan.value = 1;
+            this.afterGain.gain.value = 0.707;
+
+            this.delayer = this.context.createDelay();
+            this.delayer.connect(this.leftPanner);
+            this.delayer.delayTime.value = 0.015;
+
+            this.masterGainNode.connect(this.delayer);
+            this.masterGainNode.connect(this.rightPanner);
+            this.afterGain.connect(this.compressor);
         } else {
-            this.masterGainNode.disconnect(this.convolver2);
+            this.masterGainNode.disconnect(this.delayer);
+            this.masterGainNode.disconnect(this.rightPanner);
             this.masterGainNode.connect(this.compressor);
         }
         this.settings.globalReverb = value;
