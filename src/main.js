@@ -250,12 +250,13 @@ class PicoAudio {
             this.rightPanner.connect(this.afterGain);
             this.leftPanner.pan.value = -1;
             this.rightPanner.pan.value = 1;
-            this.afterGain.gain.value = 0.707;
+            this.afterGain.gain.value = 0.7;
 
             this.delayer = this.context.createDelay();
             this.delayer.connect(this.leftPanner);
             this.delayer.delayTime.value = 0.015;
 
+            this.masterGainNode.disconnect(this.compressor);
             this.masterGainNode.connect(this.delayer);
             this.masterGainNode.connect(this.rightPanner);
             this.afterGain.connect(this.compressor);
