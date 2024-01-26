@@ -1,4 +1,4 @@
-import { getWave, envelope, quickfadeArray } from "./waves";
+import { getWave, envelope, quickfadeArray, findClosestNumberIndex } from "./waves";
 
 export default function createNote(option) {
     const note = this.createBaseNote(option, false, true, false, true); // oscillatorのstopはこちらで実行するよう指定
@@ -72,7 +72,7 @@ export default function createNote(option) {
                     break;
                 // Otherwise use periodic waves
                 default:
-                    oscillator.setPeriodicWave(getWave(this.context, option.instrument));
+                    oscillator.setPeriodicWave(getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch)));
             }
     }
 
