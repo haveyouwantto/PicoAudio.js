@@ -234,7 +234,7 @@ function findClosestNumberIndex(target) {
   if (target <= 45) {
     return 0;
   } else if (target >= 93) {
-    return 6;
+    return 4;
   } else {
     return Math.round((target - 45) / 12);
   }
