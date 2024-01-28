@@ -242,27 +242,22 @@ class PicoAudio {
 
     setGlobalReverb(value) {
         if (value) {
-            this.leftPanner = this.context.createStereoPanner();
-            this.rightPanner = this.context.createStereoPanner();
-            this.afterGain = this.context.createGain();
-
-            this.leftPanner.connect(this.afterGain);
-            this.rightPanner.connect(this.afterGain);
-            this.leftPanner.pan.value = -1;
-            this.rightPanner.pan.value = 1;
-            this.afterGain.gain.value = 0.7;
-
-            this.delayer = this.context.createDelay();
-            this.delayer.connect(this.leftPanner);
-            this.delayer.delayTime.value = 0.015;
+            this.splitter = this.context.createChannelSplitter()
+            this.merger = this.context.createChannelMerger()
 
             this.masterGainNode.disconnect(this.compressor);
-            this.masterGainNode.connect(this.delayer);
-            this.masterGainNode.connect(this.rightPanner);
-            this.afterGain.connect(this.compressor);
+            this.masterGainNode.connect(this.splitter);
+
+            this.delayer = this.context.createDelay();
+            this.delayer.connect(this.merger, 0, 1);
+            this.delayer.delayTime.value = 0.015;
+
+            this.splitter.connect(this.merger, 0, 0)
+            this.splitter.connect(this.delayer, 1)
+
+            this.merger.connect(this.compressor)
         } else {
-            this.masterGainNode.disconnect(this.delayer);
-            this.masterGainNode.disconnect(this.rightPanner);
+            this.masterGainNode.disconnect(this.splitter);
             this.masterGainNode.connect(this.compressor);
         }
         this.settings.globalReverb = value;
