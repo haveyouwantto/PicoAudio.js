@@ -1,29 +1,66 @@
-import { SimpleSoundFont } from "../../../proto/SimpleSoundFont";
 
-export default class Soundbank {
-    constructor(context) {
-        this.context = context;
-        this.soundbank = {}
-        this.loadState = {};
-        this.soundbankNames = {};
-        this.silent = context.createBuffer(2, 16, context.sampleRate)
-        this.simpleSoundfont = null;
+let waveCache = [...Array(6)].map(() => []);
+
+let buffer = null;
+let pointers = [];
+
+/**
+ * @param {AudioContext} ctx 
+ * @param {ArrayBuffer} arrayBuffer 
+ */
+function parseSamples(arrayBuffer) {
+    buffer = arrayBuffer
+    var dataView = new DataView(arrayBuffer);
+    var instruments = [];
+
+    var off = 0;
+
+    for (let o = 0; o < 5; o++) {
+        var octaveData = []
+        instruments.push(octaveData)
+        for (let i = 0; i < 128; i++) {
+            const len = dataView.getInt32(off, true);
+            off += 4;
+            instruments[o][i] = [off, len];
+
+            off += len;
+        }
     }
 
-    load() {
-        fetch('default.sf').then(r => r.ok ? r.arrayBuffer() : null).then(buffer => {
-            let simpleSoundfont = SimpleSoundFont.decode(new Uint8Array(buffer));
-            console.log(simpleSoundfont)
-            for (let i = 0; i < 128; i++) {
-                console.log(simpleSoundfont.instruments[i].zones[0].sample.buffer)
-                this.context.decodeAudioData(simpleSoundfont.instruments[i].zones[0].sample.buffer).then(audio=>{
-                    this.soundbank[i] = audio
-                })
-            }
-        })
+    instruments.push([])
+    for (let i = 0; i < 128; i++) {
+        const len = dataView.getInt32(off, true);
+        off += 4;
+        instruments[5][i] = [off, len];
+
+        off += len;
     }
 
-    get(instId, pitch = 69, velocity) {
-        return this.soundbank[instId]
+    return instruments;
+}
+
+export function loadSamples(buffer) {
+    pointers = parseSamples(buffer);
+}
+
+async function decodeSample(ctx, octave, instId) {
+    const ptr = pointers[octave][instId];
+    const sample = buffer.slice(ptr[0], ptr[0] + ptr[1])
+
+    return ctx.decodeAudioData(sample)
+}
+
+// Get the waveform for a specific instrument and octave (default octave is 2)
+export async function getSample(ctx, instId, octave = 2) {
+    if (waveCache[octave] && waveCache[octave][instId]) {
+        // If cached, return the cached waveform
+        return waveCache[octave][instId];
     }
+    const decoded = decodeSample(ctx, octave, instId)
+    waveCache[octave][instId] = decoded;
+    return decoded;
+}
+
+export async function getDrumSample(ctx, key) {
+    return getSample(ctx, key, 5)
 }

@@ -21,6 +21,7 @@ import parseSMF from './smf/parse-smf.js';
 
 import startWebMIDI from './web-midi/start-web-midi.js';
 import { loadWaves } from './player/sound-source/periodic-wave-man.js';
+import { loadSamples } from './player/sound-source/soundbank.js';
 
 class PicoAudio {
     /**
@@ -267,6 +268,10 @@ class PicoAudio {
 
     loadWaves(buffer) {
         loadWaves(buffer)
+    }
+
+    loadSamples(buffer) {
+        loadSamples(buffer)
     }
 }
 

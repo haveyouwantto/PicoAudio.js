@@ -1,6 +1,5 @@
 import RandomUtil from '../util/random-util.js';
 import InterpolationUtil from '../util/interpolation-util.js';
-import Soundbank from '../player/sound-source/soundbank.js';
 
 export default function init(argsObj) {
     if (this.isStarted) return;
@@ -12,10 +11,6 @@ export default function init(argsObj) {
     // AudioContextを生成 //
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     this.context = audioContext ? audioContext : new AudioContext();
-
-    // Sample manager
-    this.soundbank = new Soundbank(this.context);
-    this.soundbank.load();
 
     // マスターボリューム //
     // リアルタイムで音量変更するためにdestination前にgainNodeを一つ噛ませる

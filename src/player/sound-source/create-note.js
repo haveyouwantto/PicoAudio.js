@@ -1,4 +1,5 @@
 import { getWave, envelope, quickfadeArray, findClosestNumberIndex } from "./periodic-wave-man";
+import { getSample } from "./soundbank";
 
 export default function createNote(option) {
     const isBuffer = this.settings.soundQuality == 3;
@@ -79,10 +80,12 @@ export default function createNote(option) {
 
         case 3:
             oscillator.loop = false;
-            const inst = this.soundbank.get(option.instrument, option.pitch);
-            console.log(inst)
-            oscillator.buffer = inst;
-            // oscillator.detune.value = (option.pitch - 79) * 100;
+            const octave = findClosestNumberIndex(option.pitch);
+            getSample(this.context, option.instrument, octave).then(sample => {
+                oscillator.buffer = sample;
+            });
+            const baseNote = 45 + octave * 12;
+            oscillator.detune.value = (option.pitch - baseNote) * 100;
             break;
     }
 
