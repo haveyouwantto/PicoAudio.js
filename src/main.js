@@ -20,6 +20,7 @@ import getTiming from './player/time/get-timing.js';
 import parseSMF from './smf/parse-smf.js';
 
 import startWebMIDI from './web-midi/start-web-midi.js';
+import { loadWaves } from './player/sound-source/waves.js';
 
 class PicoAudio {
     /**
@@ -262,6 +263,10 @@ class PicoAudio {
         }
         this.settings.globalReverb = value;
         this.compressor.connect(this.context.destination);
+    }
+
+    loadWaves(buffer) {
+        loadWaves(buffer)
     }
 }
 

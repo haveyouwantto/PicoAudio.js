@@ -163,50 +163,79 @@ function parseFloat16(uint16) {
   return (sign ? -1 : 1) * Math.pow(2, exponent - 15) * (1 + fraction / Math.pow(2, 10));
 }
 
-function decodeBase64EncodedData(base64_encoded_data) {
+function base64ToBuffer(base64String) {
   // Decode the base64 data
-  var binaryData = atob(base64_encoded_data);
+  var binaryData = atob(base64String);
 
-  // Create a DataView to work with the binary data
-  var dataView = new DataView(new ArrayBuffer(binaryData.length));
+  // Create a buffer to hold the binary data
+  var buffer = new ArrayBuffer(binaryData.length);
+  var view = new Uint8Array(buffer);
+
+  // Copy the binary data into the buffer
   for (var i = 0; i < binaryData.length; i++) {
-    dataView.setUint8(i, binaryData.charCodeAt(i));
+    view[i] = binaryData.charCodeAt(i);
   }
 
-  // Read the binary data and reconstruct the original array
+  return buffer;
+}
+
+function parseInstruments(arrayBuffer) {
+  var dataView = new DataView(arrayBuffer);
   var instruments = [];
   var offset = 0;
+
   for (var octave = 0; octave < 5; octave++) {
     var octaveData = [];
     instruments.push(octaveData);
+
     for (var i = 0; i < 128; i++) {
-      var amp_len = dataView.getInt8(offset, true); // Read the length of the instrument array
+      var ampLen = dataView.getInt8(offset, true); // Read the length of the instrument array
       offset += 1; // Move the offset to the start of the instrument array
+
       var instrumentArray = [];
-      for (var j = 0; j < amp_len; j++) {
+      for (var j = 0; j < ampLen; j++) {
         var floatValue = parseFloat16(dataView.getUint16(offset, true)); // Read the floating-point number
         offset += 2; // Move the offset to the next floating-point number
         instrumentArray.push(floatValue);
       }
+
       octaveData.push(instrumentArray);
     }
   }
 
-  // Return the reconstructed original array
   return instruments;
 }
 
+// Initialize a wave cache array with 5 empty arrays
+let waveCache = [...Array(5)].map(() => []);
 
-const amp = decodeBase64EncodedData(instrumentData);
-console.log(amp)
+// Variable to store parsed instruments
+let amp = null;
+
+// Function to load waves from a buffer
+export function loadWaves(buffer) {
+  // If no buffer is provided, load default periodic wave table
+  if (!buffer) {
+    var b = base64ToBuffer(instrumentData);
+    amp = parseInstruments(b);
+  } else {
+    try {
+      // Parse instruments from the provided buffer
+      amp = parseInstruments(buffer);
+    } catch (e) {
+      // If an error occurs during parsing, load default waves
+      loadWaves();
+    }
+  }
+}
+
+// Load waves initially
+loadWaves();
 
 // Generate a random phase value between -π and π
 function getRandomPhase() {
   return Math.random() * 2 * Math.PI - Math.PI;
 }
-
-// Initialize a wave cache array with 5 empty arrays
-const waveCache = [...Array(5)].map(() => []);
 
 // Create a waveform based on the instrument ID and octave (default octave is 2)
 function createWave(instId, octave = 2) {
