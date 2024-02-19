@@ -20,6 +20,7 @@ import getTiming from './player/time/get-timing.js';
 import parseSMF from './smf/parse-smf.js';
 
 import startWebMIDI from './web-midi/start-web-midi.js';
+import { loadWaves } from './player/sound-source/periodic-wave-man.js';
 
 class PicoAudio {
     /**
@@ -240,45 +241,32 @@ class PicoAudio {
         return render.call(this)
     }
 
-    createReverbBuffer() {
-        var len = this.context.sampleRate * 0.25
-        var reverbBuffer = this.context.createBuffer(2, len, this.context.sampleRate);
-        var ch1 = reverbBuffer.getChannelData(0);
-        var ch2 = reverbBuffer.getChannelData(1);
-
-        const unit = 1 / len;
-        let area = 0;
-
-        for (let i = 0; i < len; i++) {
-            let fade_factor = Math.pow(10, -(i * unit * 2))
-            ch1[i] = (Math.random() - 0.5) * fade_factor;
-            ch2[i] = (Math.random() - 0.5) * fade_factor;
-            area += Math.abs(ch1[i]) * unit
-        }
-
-        return {
-            "buffer": reverbBuffer,
-            "area": area
-        }
-    }
-
     setGlobalReverb(value) {
         if (value) {
-            this.convolver2 = this.context.createConvolver();
-            var buffer = this.createReverbBuffer();
-            this.convolver2.buffer = buffer.buffer;
-            this.convolverGainNode2 = this.context.createGain();
-            this.convolverGainNode2.gain.value = 0.5 / buffer.area;
-            this.convolver2.connect(this.convolverGainNode2);
+            this.splitter = this.context.createChannelSplitter()
+            this.merger = this.context.createChannelMerger()
 
-            this.masterGainNode.connect(this.convolver2);
-            this.convolverGainNode2.connect(this.compressor);
+            this.masterGainNode.disconnect(this.compressor);
+            this.masterGainNode.connect(this.splitter);
+
+            this.delayer = this.context.createDelay();
+            this.delayer.connect(this.merger, 0, 1);
+            this.delayer.delayTime.value = 0.015;
+
+            this.splitter.connect(this.merger, 0, 0)
+            this.splitter.connect(this.delayer, 1)
+
+            this.merger.connect(this.compressor)
         } else {
-            this.masterGainNode.disconnect(this.convolver2);
+            this.masterGainNode.disconnect(this.splitter);
             this.masterGainNode.connect(this.compressor);
         }
         this.settings.globalReverb = value;
         this.compressor.connect(this.context.destination);
+    }
+
+    loadWaves(buffer) {
+        loadWaves(buffer)
     }
 }
 

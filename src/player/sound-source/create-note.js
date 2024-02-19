@@ -1,5 +1,4 @@
-import Soundbank from "./soundbank";
-import { getWave, envelope, quickfadeArray } from "./waves";
+import { getWave, envelope, quickfadeArray, findClosestNumberIndex } from "./periodic-wave-man";
 
 export default function createNote(option) {
     const isBuffer = this.settings.soundQuality == 3;
@@ -74,7 +73,7 @@ export default function createNote(option) {
                     break;
                 // Otherwise use periodic waves
                 default:
-                    oscillator.setPeriodicWave(getWave(this.context, option.instrument));
+                    oscillator.setPeriodicWave(getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch)));
             }
             break;
 
