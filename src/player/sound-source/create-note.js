@@ -1,4 +1,4 @@
-import { getWave, envelope, quickfadeArray, findClosestNumberIndex } from "./waves";
+import { getWave, envelope, quickfadeArray, findClosestNumberIndex } from "./periodic-wave-man";
 
 export default function createNote(option) {
     const note = this.createBaseNote(option, false, true, false, true); // oscillatorのstopはこちらで実行するよう指定
