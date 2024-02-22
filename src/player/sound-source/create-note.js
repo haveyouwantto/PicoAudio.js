@@ -79,12 +79,14 @@ export default function createNote(option) {
             break;
 
         case 3:
-            oscillator.loop = false;
+            gainNode.gain.value *= 3;
+            oscillator.loop = !quickfadeArray[option.instrument];
             const octave = findClosestNumberIndex(option.pitch);
             getSample(this.context, option.instrument, octave).then(sample => {
                 oscillator.buffer = sample;
             });
             const baseNote = 45 + octave * 12;
+            oscillator.loopStart = 1;
             oscillator.detune.value = (option.pitch - baseNote) * 100;
             break;
     }
@@ -212,9 +214,25 @@ export default function createNote(option) {
             let velocity = gainNode.gain.value * 1.3;
             const isPluck = quickfadeArray[option.instrument];
             const attackClamped = Math.max(attack, 0.001);
-            const releaseClamped = Math.min(release, 0.25);
 
+            gainNode.gain.setValueAtTime(0, note.start);
+            // Attack phase
+            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
+
+            // Decay phase
+            if (isPluck) {
+                const decayTime = decay * Math.pow(2, (69 - option.pitch) / 24);
+                gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
+            } else {
+                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
+            }
+
+            // Sustain phase (no explicit scheduling needed)
+
+            // Release phase
+            const releaseClamped = Math.min(release, 0.25);
             gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
+
             this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
     }
 

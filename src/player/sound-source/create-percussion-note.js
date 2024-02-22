@@ -30,7 +30,6 @@ export default function createPercussionNote(option) {
             stopAudioTime2 = 2;
             getDrumSample(this.context, option.pitch).then(sample => {
                 source.buffer = sample;
-                console.log(source, sample, option.pitch)
             });
             break
         default:
