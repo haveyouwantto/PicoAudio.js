@@ -23,7 +23,7 @@ export default function createPercussionNote(option) {
     let stopAudioTime2 = 0;
     switch (this.settings.soundQuality) {
         case 3:
-            gainNode.gain.value = velocity;
+            gainNode.gain.value = velocity * 1.5;
             gainNode2.gain.value = 0;
             source.loop = false;
             stopAudioTime = 2;

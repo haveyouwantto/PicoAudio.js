@@ -16,6 +16,8 @@ export default function createNote(option) {
 
     // 音色の設定 //
     switch (this.settings.soundQuality) {
+        case -1:
+            break;
         case 0:
             switch (this.channels[note.channel][0] * 1000 || option.instrument) {
                 // Sine
@@ -79,7 +81,6 @@ export default function createNote(option) {
             break;
 
         case 3:
-            gainNode.gain.value *= 3;
             oscillator.loop = !quickfadeArray[option.instrument];
             const octave = findClosestNumberIndex(option.pitch);
             getSample(this.context, option.instrument, octave).then(sample => {
@@ -167,6 +168,7 @@ export default function createNote(option) {
                 }
             }
             break;
+        case -1:
         case 1:
             switch (option.instrument) {
                 case 80:
@@ -206,28 +208,12 @@ export default function createNote(option) {
             break;
 
         case 3:
-            gainNode.gain.value *= 1.3;
-
             // Apply envelope to note
             let instEnvelope = envelope[option.instrument];
-            const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-            let velocity = gainNode.gain.value * 1.3;
-            const isPluck = quickfadeArray[option.instrument];
-            const attackClamped = Math.max(attack, 0.001);
+            const release = instEnvelope[3];
+            let velocity = gainNode.gain.value * 1.5;
 
-            gainNode.gain.setValueAtTime(0, note.start);
-            // Attack phase
-            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
-
-            // Decay phase
-            if (isPluck) {
-                const decayTime = decay * Math.pow(2, (69 - option.pitch) / 24);
-                gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
-            } else {
-                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
-            }
-
-            // Sustain phase (no explicit scheduling needed)
+            gainNode.gain.setValueAtTime(velocity, note.start);
 
             // Release phase
             const releaseClamped = Math.min(release, 0.25);

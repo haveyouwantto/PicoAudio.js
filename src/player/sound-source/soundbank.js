@@ -41,13 +41,18 @@ function parseSamples(arrayBuffer) {
 
 export function loadSamples(buffer) {
     pointers = parseSamples(buffer);
+    waveCache = [...Array(6)].map(() => []);
 }
 
 async function decodeSample(ctx, octave, instId) {
-    const ptr = pointers[octave][instId];
-    const sample = buffer.slice(ptr[0], ptr[0] + ptr[1])
-
-    return ctx.decodeAudioData(sample)
+    try {
+        const ptr = pointers[octave][instId];
+        const sample = buffer.slice(ptr[0], ptr[0] + ptr[1])
+        return ctx.decodeAudioData(sample)
+    } catch (e) {
+        console.warn(e)
+        return null;
+    }
 }
 
 // Get the waveform for a specific instrument and octave (default octave is 2)
@@ -57,8 +62,11 @@ export async function getSample(ctx, instId, octave = 2) {
         return waveCache[octave][instId];
     }
     const decoded = decodeSample(ctx, octave, instId)
-    waveCache[octave][instId] = decoded;
+    if (decoded) {
+        waveCache[octave][instId] = decoded;
+    }
     return decoded;
+
 }
 
 export async function getDrumSample(ctx, key) {
