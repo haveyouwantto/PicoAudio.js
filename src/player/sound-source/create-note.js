@@ -88,7 +88,8 @@ export default function createNote(option) {
             });
             const baseNote = 45 + octave * 12;
             oscillator.loopStart = 1;
-            oscillator.detune.value = (option.pitch - baseNote) * 100;
+            oscillator.basePitch = (option.pitch - baseNote) * 100;
+            oscillator.detune.value = oscillator.basePitch;
             break;
     }
 

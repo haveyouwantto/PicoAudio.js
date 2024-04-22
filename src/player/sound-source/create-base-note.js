@@ -1,3 +1,5 @@
+import { findClosestNumberIndex } from "./periodic-wave-man";
+
 export default function createBaseNote(option, isBuffer, isExpression, nonChannel, nonStop) {
     // 最低限の変数を準備（無音の場合は処理終了するため） //
     const settings = this.settings;
@@ -59,6 +61,17 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
         }) : false;
     } else {
         oscillator.loop = true;
+        const octave = findClosestNumberIndex(option.pitch);
+        const baseNote = 45 + octave * 12;
+        const basePitch = (option.pitch - baseNote) * 100;
+           
+        option.pitchBend ? option.pitchBend.forEach((p) => {
+            const t = Math.max(0, p.time + songStartTime + baseLatency);
+            oscillator.detune.setValueAtTime(
+                basePitch + p.value * 100,
+                t
+            );
+        }) : false;
         // oscillator.buffer = this.whitenoise;
     }
 
