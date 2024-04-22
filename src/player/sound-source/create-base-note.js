@@ -61,6 +61,7 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
         }) : false;
     } else {
         oscillator.loop = true;
+        if (option.channel != 9) {
         const octave = findClosestNumberIndex(option.pitch);
         const baseNote = 45 + octave * 12;
         const basePitch = (option.pitch - baseNote) * 100;
@@ -72,6 +73,7 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
                 t
             );
         }) : false;
+        }
         // oscillator.buffer = this.whitenoise;
     }
 
