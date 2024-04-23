@@ -10,7 +10,7 @@ export default function init(argsObj) {
 
     // AudioContextを生成 //
     const AudioContext = window.AudioContext || window.webkitAudioContext;
-    this.context = audioContext ? audioContext : new AudioContext();
+    this.context = audioContext ? audioContext : new AudioContext({ latencyHint: "balanced" });
 
     // マスターボリューム //
     // リアルタイムで音量変更するためにdestination前にgainNodeを一つ噛ませる
