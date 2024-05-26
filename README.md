@@ -268,3 +268,8 @@ PicoAudio.getTiming(time: number): number
 
 ## License
 Code released under the MIT License
+
+
+## Credits
+
+FM tones: [sneakernets/DMXOPL](https://github.com/sneakernets/DMXOPL) (MIT License)

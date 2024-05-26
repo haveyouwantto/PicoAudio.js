@@ -10,12 +10,16 @@ export default function init(argsObj) {
 
     // AudioContextを生成 //
     const AudioContext = window.AudioContext || window.webkitAudioContext;
-    this.context = audioContext ? audioContext : new AudioContext();
+    this.context = audioContext ? audioContext : new AudioContext({ latencyHint: "balanced" });
 
     // マスターボリューム //
     // リアルタイムで音量変更するためにdestination前にgainNodeを一つ噛ませる
     this.masterGainNode = this.context.createGain();
     this.masterGainNode.gain.value = this.settings.masterVolume;
+
+    // Add a dynamics compressor to prevent overloading
+    this.compressor = this.context.createDynamicsCompressor();
+    this.compressor.threshold.value = -12;
 
     // 仮想サンプルレート //
     const sampleRate = this.context.sampleRate;
@@ -32,10 +36,10 @@ export default function init(argsObj) {
         const sampleLength = sampleRate * seLength;
         const sampleLengthVT = sampleRateVT * seLength;
         const vtBufs = [];
-        for (let ch=0; ch<2; ch++) {
+        for (let ch = 0; ch < 2; ch++) {
             vtBufs.push(new Float32Array(sampleLengthVT));
             const vtBuf = vtBufs[ch];
-            for (let i=0; i<sampleLengthVT; i++) {
+            for (let i = 0; i < sampleLengthVT; i++) {
                 const r = RandomUtil.random();
                 vtBuf[i] = r * 2 - 1;
             }
@@ -56,17 +60,17 @@ export default function init(argsObj) {
         const sampleLength = sampleRate * seLength;
         const sampleLengthVT = sampleRateVT * seLength;
         const vtBufs = [];
-        for (let ch=0; ch<2; ch++) {
+        for (let ch = 0; ch < 2; ch++) {
             vtBufs.push(new Float32Array(sampleLengthVT));
             const vtBuf = vtBufs[ch];
-            for (let i=0; i<sampleLengthVT; i++) {
+            for (let i = 0; i < sampleLengthVT; i++) {
                 const v = ((sampleLengthVT - i) / sampleLengthVT);
                 const s = i / sampleRateVT;
                 const d = (s < 0.030 ? 0 : v)
-                    * (s >= 0.030 && s < 0.031 ? v*2 : v)
-                    * (s >= 0.040 && s < 0.042 ? v*1.5 : v)
-                    * (s >= 0.050 && s < 0.054 ? v*1.25 : v)
-                    * RandomUtil.random() * 0.2 * Math.pow((v-0.030), 4);
+                    * (s >= 0.030 && s < 0.031 ? v * 2 : v)
+                    * (s >= 0.040 && s < 0.042 ? v * 1.5 : v)
+                    * (s >= 0.050 && s < 0.054 ? v * 1.25 : v)
+                    * RandomUtil.random() * 0.2 * Math.pow((v - 0.030), 4);
                 vtBuf[i] = d;
             }
         }
@@ -83,7 +87,6 @@ export default function init(argsObj) {
     this.convolverGainNode.gain.value = this.settings.reverbVolume;
     this.convolver.connect(this.convolverGainNode);
     this.convolverGainNode.connect(this.masterGainNode);
-    this.masterGainNode.connect(this.context.destination);
 
     // コーラス用のAudioNode作成・接続 //
     this.chorusDelayNode = this.context.createDelay();
@@ -98,8 +101,10 @@ export default function init(argsObj) {
     this.chorusLfoGainNode.connect(this.chorusDelayNode.delayTime);
     this.chorusDelayNode.connect(this.chorusGainNode);
     this.chorusGainNode.connect(this.masterGainNode);
-    this.masterGainNode.connect(this.context.destination);
+    // this.masterGainNode.connect(this.context.destination);
     this.chorusOscillator.start(0);
+
+    this.setGlobalReverb(this.settings.globalReverb);
 
     // レイテンシの設定 //
     this.baseLatency = this.context.baseLatency || this.baseLatency;

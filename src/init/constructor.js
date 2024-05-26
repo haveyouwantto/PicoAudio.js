@@ -36,7 +36,10 @@ export default function picoAudioConstructor(argsObj) {
         maxPercPoly: -1, // 同時発音数(パーカッション) -1:infinity
         isOfflineRendering: false, // TODO 演奏データを作成してから演奏する
         isSameDrumSoundOverlap: false, // 同じドラムの音が重なることを許容するか
-        baseLatency: -1 // レイテンシの設定 -1:auto
+        baseLatency: -1, // レイテンシの設定 -1:auto
+        soundQuality: 0, // Set the sound quality level: 0 for basic waveform, 1 for FM waveform
+        preserveSmfData: false, // Preserve the SMF (Standard MIDI File) data during processing,
+        globalReverb: false
     };
 
     // argsObjで設定値が指定されていたら上書きする

@@ -1,5 +1,5 @@
 import UpdateNote from './play/update-note.js';
-import {Number_MAX_SAFE_INTEGER} from '../util/ponyfill.js';
+import { Number_MAX_SAFE_INTEGER } from '../util/ponyfill.js';
 
 export default function play(isSongLooping) {
     const context = this.context;
@@ -20,7 +20,7 @@ export default function play(isSongLooping) {
             if (states.webMIDIWaitState != "waiting") { // play()連打の対策
                 // stop()から1000ms後にplay()を実行
                 states.webMIDIWaitState = "waiting";
-                let waitTime = settings.WebMIDIWaitTime - (context.currentTime - states.webMIDIStopTime)*1000;
+                let waitTime = settings.WebMIDIWaitTime - (context.currentTime - states.webMIDIStopTime) * 1000;
                 if (states.webMIDIStopTime == 0) waitTime = settings.WebMIDIWaitTime; // MIDI Portをopenして最初に呼び出すときも少し待つ
                 setTimeout(() => {
                     states.webMIDIWaitState = "completed";
@@ -91,4 +91,37 @@ export default function play(isSongLooping) {
         rootTimeout: reserve,
         stopFunc: () => { clearInterval(reserve); }
     });
+}
+
+export function render(spanDuration = 1) {
+    const notes = []
+    let index = 0;
+    for (let channel of this.playData.channels) {
+        for (let note of channel.notes) {
+            notes.push(note)
+        }
+    }
+    notes.sort((n1, n2) => n1.start - n2.start)
+
+    const startRender = () => {
+        let note = notes[index];
+        do {
+            note = notes[index];
+            if (note) note.channel != 9 ? this.createNote(note) : this.createPercussionNote(note)
+            index++;
+        } while (index < notes.length && note.startTime - this.context.currentTime <= spanDuration)
+    }
+    startRender();
+
+    this.context.suspend(spanDuration);
+
+    this.context.onstatechange = (event) => {
+        if (this.context.state === 'suspended') {
+            startRender()
+            this.context.resume()
+            this.context.suspend(this.context.currentTime + spanDuration).catch(e => console.warn(e));
+        }
+    }
+
+    return this.context.startRendering()
 }

@@ -3,7 +3,7 @@ import init from './init/init.js';
 
 import setData from './player/set-data.js';
 import initStatus from './player/init-status.js';
-import play from './player/play.js';
+import play, { render } from './player/play.js';
 import stop from './player/stop.js';
 
 import createBaseNote from './player/sound-source/create-base-note.js';
@@ -20,6 +20,8 @@ import getTiming from './player/time/get-timing.js';
 import parseSMF from './smf/parse-smf.js';
 
 import startWebMIDI from './web-midi/start-web-midi.js';
+import { loadWaves } from './player/sound-source/periodic-wave-man.js';
+import { loadSamples } from './player/sound-source/soundbank.js';
 
 class PicoAudio {
     /**
@@ -161,7 +163,7 @@ class PicoAudio {
     // インターフェース関係 //
     addEventListener(type, func) {
         // type = EventName (play, stop, noteOn, noteOff, songEnd)
-        this.events.push({type: type, func: func});
+        this.events.push({ type: type, func: func });
     }
     removeEventListener(type, func) {
         for (let i = this.events.length; i >= 0; i--) {
@@ -182,7 +184,7 @@ class PicoAudio {
             if (event.type == type) {
                 try {
                     event.func(option);
-                } catch(e) {
+                } catch (e) {
                     console.log(e);
                 }
             }
@@ -210,8 +212,8 @@ class PicoAudio {
         });
     }
     initChannels() {
-        for (let i=0; i<16; i++) {
-            this.channels[i] = [0,0,1];
+        for (let i = 0; i < 16; i++) {
+            this.channels[i] = [0, 0, 1];
         }
     }
     getMasterVolume() { return this.settings.masterVolume; }
@@ -235,6 +237,42 @@ class PicoAudio {
     setChorus(enable) { this.settings.isChorus = enable; }
     getChorusVolume() { return this.settings.chorusVolume; }
     setChorusVolume(volume) { this.settings.chorusVolume = volume; }
+
+    render() {
+        return render.call(this)
+    }
+
+    setGlobalReverb(value) {
+        if (value) {
+            this.splitter = this.context.createChannelSplitter()
+            this.merger = this.context.createChannelMerger()
+
+            this.masterGainNode.disconnect(this.compressor);
+            this.masterGainNode.connect(this.splitter);
+
+            this.delayer = this.context.createDelay();
+            this.delayer.connect(this.merger, 0, 1);
+            this.delayer.delayTime.value = 0.015;
+
+            this.splitter.connect(this.merger, 0, 0)
+            this.splitter.connect(this.delayer, 1)
+
+            this.merger.connect(this.compressor)
+        } else {
+            this.masterGainNode.disconnect(this.splitter);
+            this.masterGainNode.connect(this.compressor);
+        }
+        this.settings.globalReverb = value;
+        this.compressor.connect(this.context.destination);
+    }
+
+    loadWaves(buffer) {
+        loadWaves(buffer)
+    }
+
+    loadSamples(buffer) {
+        loadSamples(buffer)
+    }
 }
 
 export default PicoAudio;

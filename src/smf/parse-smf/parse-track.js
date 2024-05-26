@@ -180,7 +180,7 @@ export default function parseTrack(info) {
                 }
             }
             // WebMIDIAPI
-            if (this.settings.isWebMIDI) {
+            if (this.settings.isWebMIDI|| this.settings.preserveSmfData) {
                 if (lastState != null) {
                     // WebMIDI用に17chに全てのMIDIイベントを入れる
                     ParseUtil.chIndicesInsert(this, channels[16], tick, cashP, p - cashP);
