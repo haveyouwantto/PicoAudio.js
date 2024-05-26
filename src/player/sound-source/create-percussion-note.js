@@ -833,7 +833,7 @@ export default function createPercussionNote(option) {
                 case 84: // Bell Tree
                     {
                         // w s
-                        const invert = false;
+                        const invert = true;
                         source.playbackRate.value = 1;
                         for (let i = 0; i < 28; i++) {
                             gainNode.gain.setValueAtTime(velocity * 0.1, start + i / 24 * 0.45);
