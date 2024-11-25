@@ -66,8 +66,8 @@ export default function createPercussionNote(option) {
                             gainNode.gain.linearRampToValueAtTime(0, start + len);
                             stopAudioTime = len;
                             // s
-                            oscillator.frequency.setValueAtTime(option.pitch == 38 ? 140 : 200, start);
-                            oscillator.frequency.linearRampToValueAtTime(option.pitch == 38 ? 100 : 160, start + 0.1);
+                            oscillator.frequency.setValueAtTime(option.pitch == 38 ? 160 : 200, start);
+                            oscillator.frequency.linearRampToValueAtTime(option.pitch == 38 ? 120 : 160, start + 0.1);
                             gainNode2.gain.setValueAtTime(velocity * 2, start);
                             gainNode2.gain.linearRampToValueAtTime(0, start + 0.1);
                             stopAudioTime2 = 0.1;
