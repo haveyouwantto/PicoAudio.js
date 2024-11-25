@@ -102,10 +102,10 @@ export default function createPercussionNote(option) {
                             // w
                             source.playbackRate.value = 1;
                             if (option.pitch == 42) {
-                                gainNode.gain.setValueAtTime(velocity * 0.8, start);
+                                gainNode.gain.setValueAtTime(velocity * 0.3, start);
                             } else {
                                 gainNode.gain.setValueAtTime(0, start);
-                                gainNode.gain.linearRampToValueAtTime(velocity * 0.8, start + 0.014);
+                                gainNode.gain.linearRampToValueAtTime(velocity * 0.3, start + 0.014);
                             }
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.08);
                             stopAudioTime = 0.08;
@@ -117,10 +117,10 @@ export default function createPercussionNote(option) {
                     case 46: // Open Hihat
                         {
                             // w
-                            source.playbackRate.setValueAtTime(0.35, start);
-                            source.playbackRate.linearRampToValueAtTime(0.6, start + 0.1);
+                            source.playbackRate.setValueAtTime(1.35, start);
+                            source.playbackRate.linearRampToValueAtTime(1.6, start + 0.1);
                             source.playbackRate.linearRampToValueAtTime(1, start + 0.3);
-                            gainNode.gain.setValueAtTime(velocity * 1.1, start);
+                            gainNode.gain.setValueAtTime(velocity * 0.7, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.3);
                             stopAudioTime = 1.5;
                             // s
