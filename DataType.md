@@ -36,8 +36,7 @@ The **PicoAudio Soundbank** is a format for storing and accessing MIDI instrumen
 
 ### Summary:
 - The **Periodic Wave Table** stores harmonic data for MIDI instruments, encoded in Base64 for easy access.
-- The **PicoAudio Soundbank** organizes MIDI instruments and drum samples by octave, with each instrument's audio data sized and accessible for playback.
-
+- The **PicoAudio Soundbank** organizes MIDI instruments and drum samples by octave. Each instrument's audio data is preceded by a **length field** indicating the number of bytes to read. Once the specified number of bytes is read, the audio data is loaded into memory for playback.
 
 ----
 
@@ -79,4 +78,4 @@ The **PicoAudio Soundbank** is a format for storing and accessing MIDI instrumen
 
 #### まとめ：
 - **周期波テーブル**は、MIDI 楽器のハーモニクスデータを Base64 でエンコードして格納する。
-- **PicoAudio サウンドバンク**は、オクターブ単位で MIDI 楽器とドラムサンプルを整理し、長さ情報を基に音声データにアクセスして再生できる。
+- **PicoAudio サウンドバンク**は、オクターブごとにMIDI楽器とドラムサンプルを整理しています。各楽器の音声データの前に、**長さフィールド**が付加されており、読み取るべきバイト数を示します。指定されたバイト数を読み取った後、その音声データをメモリにロードして再生に利用します。
