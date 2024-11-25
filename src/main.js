@@ -268,6 +268,10 @@ class PicoAudio {
     loadWaves(buffer) {
         loadWaves(buffer)
     }
+
+    getDuration() {
+        return this.playData?.lastEventTime ?? 0;
+    }
 }
 
 export default PicoAudio;

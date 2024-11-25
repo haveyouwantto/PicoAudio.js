@@ -53,7 +53,7 @@ export default function play(isSongLooping) {
     let reserveSongEnd;
     const reserveSongEndFunc = () => {
         this.clearFunc("rootTimeout", reserveSongEnd);
-        const finishTime = this.getTime(Number_MAX_SAFE_INTEGER);
+        const finishTime = this.getDuration();
         if (finishTime - context.currentTime + states.startTime <= 0) {
             // 予定の時間以降に曲終了
             trigger.songEnd();
@@ -68,7 +68,7 @@ export default function play(isSongLooping) {
             });
         }
     };
-    const finishTime = this.getTime(Number_MAX_SAFE_INTEGER);
+    const finishTime = this.getDuration();
     const reserveSongEndTime = (finishTime - context.currentTime + states.startTime) * 1000;
     reserveSongEnd = setTimeout(reserveSongEndFunc, reserveSongEndTime);
     this.pushFunc({
