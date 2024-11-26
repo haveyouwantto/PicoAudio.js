@@ -59,16 +59,16 @@ export default function createPercussionNote(option) {
                     case 38: // Acoustic Snare
                     case 40: // Electric Snare
                         {
-                            const len = option.pitch == 38 ? 0.25 : 0.2;
+                            const len = option.pitch == 38 ? 0.15 : 0.2;
                             // w
                             source.playbackRate.value = 0.7;
-                            gainNode.gain.setValueAtTime(velocity, start);
-                            gainNode.gain.linearRampToValueAtTime(0, start + len);
+                            gainNode.gain.setValueAtTime(velocity * 0.7, start);
+                            gainNode.gain.linearRampToValueAtTime(0, start+len);
                             stopAudioTime = len;
                             // s
                             oscillator.frequency.setValueAtTime(option.pitch == 38 ? 160 : 200, start);
                             oscillator.frequency.linearRampToValueAtTime(option.pitch == 38 ? 120 : 160, start + 0.1);
-                            gainNode2.gain.setValueAtTime(velocity * 2, start);
+                            gainNode2.gain.setValueAtTime(velocity * 3, start);
                             gainNode2.gain.linearRampToValueAtTime(0, start + 0.1);
                             stopAudioTime2 = 0.1;
                             break;
