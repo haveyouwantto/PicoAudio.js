@@ -139,8 +139,8 @@ export default function createPercussionNote(option) {
                         {
                             // w
                             source.buffer = this.cymbalnoise;
-                            const r = option.pitch == 49 ? 0.3 : 0.5;
-                            const r2 = option.pitch == 49 ? 0.4 : 0.7;
+                            const r = option.pitch == 49 ? 0.5 : 0.7;
+                            const r2 = option.pitch == 49 ? 0.6 : 0.9;
                             source.playbackRate.setValueAtTime(r, start);
                             source.playbackRate.linearRampToValueAtTime(r2, start + 0.15);
                             source.playbackRate.linearRampToValueAtTime(0.9, start + 0.4);
@@ -158,7 +158,7 @@ export default function createPercussionNote(option) {
                             // w
                             source.buffer = this.cymbalnoise;
                             source.playbackRate.value = 1;
-                            gainNode.gain.setValueAtTime(velocity * 0.9, start);
+                            gainNode.gain.setValueAtTime(velocity * 1.1, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.35);
                             stopAudioTime = 2;
                             // s
@@ -177,7 +177,7 @@ export default function createPercussionNote(option) {
                             source.playbackRate.setValueAtTime(0.17, start);
                             source.playbackRate.linearRampToValueAtTime(0.25, start + 0.1);
                             source.playbackRate.linearRampToValueAtTime(0.5, start + 0.6);
-                            gainNode.gain.setValueAtTime(velocity * 1.3, start);
+                            gainNode.gain.setValueAtTime(velocity * 1.5, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.35);
                             stopAudioTime = 2;
                             // s
