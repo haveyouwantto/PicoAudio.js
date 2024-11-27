@@ -64,7 +64,7 @@ export default function createPercussionNote(option) {
                             // w
                             source.buffer = this.pinknoise;
                             source.playbackRate.value = 0.7;
-                            gainNode.gain.setValueAtTime(velocity * 1.4, start);
+                            gainNode.gain.setValueAtTime(velocity * 1.6, start);
                             gainNode.gain.linearRampToValueAtTime(0, start+len);
                             stopAudioTime = len;
                             // s
@@ -103,10 +103,10 @@ export default function createPercussionNote(option) {
                     case 44: // Pedal High-Hat
                         {
                             // w
-                            source.buffer = this.whitenoise;
+                            source.buffer = this.cymbalnoise;
                             source.playbackRate.value = 1;
                             if (option.pitch == 42) {
-                                gainNode.gain.setValueAtTime(velocity * 0.3, start);
+                                gainNode.gain.setValueAtTime(velocity * 0.6, start);
                             } else {
                                 gainNode.gain.setValueAtTime(0, start);
                                 gainNode.gain.linearRampToValueAtTime(velocity * 0.3, start + 0.014);
@@ -121,11 +121,11 @@ export default function createPercussionNote(option) {
                     case 46: // Open Hihat
                         {
                             // w
-                            source.buffer = this.whitenoise;
+                            source.buffer = this.cymbalnoise;
                             source.playbackRate.setValueAtTime(1.35, start);
                             source.playbackRate.linearRampToValueAtTime(1.6, start + 0.1);
                             source.playbackRate.linearRampToValueAtTime(1, start + 0.3);
-                            gainNode.gain.setValueAtTime(velocity * 0.7, start);
+                            gainNode.gain.setValueAtTime(velocity, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.3);
                             stopAudioTime = 1.5;
                             // s
@@ -138,7 +138,7 @@ export default function createPercussionNote(option) {
                     case 57: // Crash Cymbal 2
                         {
                             // w
-                            source.buffer = this.whitenoise;
+                            source.buffer = this.cymbalnoise;
                             const r = option.pitch == 49 ? 0.3 : 0.5;
                             const r2 = option.pitch == 49 ? 0.4 : 0.7;
                             source.playbackRate.setValueAtTime(r, start);
@@ -156,7 +156,7 @@ export default function createPercussionNote(option) {
                     case 59: // Ride Cymbal 2
                         {
                             // w
-                            source.buffer = this.whitenoise;
+                            source.buffer = this.cymbalnoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 0.9, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.35);
@@ -173,7 +173,7 @@ export default function createPercussionNote(option) {
                     case 52: // Chinese Cymbal
                         {
                             // w
-                            source.buffer = this.whitenoise;
+                            source.buffer = this.cymbalnoise;
                             source.playbackRate.setValueAtTime(0.17, start);
                             source.playbackRate.linearRampToValueAtTime(0.25, start + 0.1);
                             source.playbackRate.linearRampToValueAtTime(0.5, start + 0.6);
@@ -207,7 +207,7 @@ export default function createPercussionNote(option) {
                     case 55: // Splash Cymbal
                         {
                             // w
-                            source.buffer = this.whitenoise;
+                            source.buffer = this.cymbalnoise;
                             source.playbackRate.setValueAtTime(0.5, start);
                             source.playbackRate.linearRampToValueAtTime(0.8, start + 0.1);
                             source.playbackRate.linearRampToValueAtTime(1, start + 0.6);

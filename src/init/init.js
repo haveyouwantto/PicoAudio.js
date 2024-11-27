@@ -2,6 +2,7 @@ import RandomUtil from '../util/random-util.js';
 import InterpolationUtil from '../util/interpolation-util.js';
 import { generatePinkNoise } from '../player/audio/sound-gen.js';
 import AudioUtil from '../util/audio-util.js';
+import Waveform from '../player/audio/dsp.js';
 
 export default function init(argsObj) {
     if (this.isStarted) return;
@@ -54,6 +55,12 @@ export default function init(argsObj) {
 
     this.pinknoise = this.context.createBuffer(2, sampleLength, sampleRate);
     AudioUtil.fillAudioBuffer(this.pinknoise, generatePinkNoise(sampleLength));
+
+    this.cymbalnoise = this.context.createBuffer(2, sampleLength, sampleRate);
+    AudioUtil.fillAudioBuffer(this.cymbalnoise, Waveform.WhiteNoise(sampleRate, 1)
+        .highPass(8000)
+        .norm().samples
+    );
 
     // リバーブ用のインパルス応答音声データ作成（てきとう） //
     if (picoAudio && picoAudio.impulseResponse) { // 使いまわし

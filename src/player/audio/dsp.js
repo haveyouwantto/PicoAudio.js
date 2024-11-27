@@ -35,3 +35,58 @@ export function miniIFFT(re, im) {
 }
 
 
+export default class Waveform {
+    constructor(samples, sampleRate) {
+        this.samples = samples;
+        this.sampleRate = sampleRate;
+    }
+
+    // Normalize the waveform to the range [-1, 1]
+    norm() {
+        const maxAmplitude = this.samples.reduce((p, c) => Math.max(p, Math.abs(c)));
+        if (maxAmplitude > 0) {
+            this.samples = this.samples.map(sample => sample / maxAmplitude);
+        }
+        return this;
+    }
+
+    // Apply a low-pass filter
+    lowPass(cutoff) {
+        const RC = 1 / (2 * Math.PI * cutoff);
+        const dt = 1 / this.sampleRate;
+        const alpha = dt / (RC + dt);
+
+        const filtered = new Array(this.samples.length);
+        filtered[0] = 0; // Initialize the first sample
+
+        for (let i = 1; i < this.samples.length; i++) {
+            filtered[i] = alpha * this.samples[i] + (1 - alpha) * filtered[i - 1];
+        }
+
+        this.samples = filtered;
+        return this;
+    }
+
+    // Apply a high-pass filter
+    highPass(cutoff) {
+        const RC = 1 / (2 * Math.PI * cutoff);
+        const dt = 1 / this.sampleRate;
+        const alpha = RC / (RC + dt);
+
+        const filtered = new Array(this.samples.length);
+        filtered[0] = 0; // Initialize the first sample
+
+        for (let i = 1; i < this.samples.length; i++) {
+            filtered[i] = alpha * (filtered[i - 1] + this.samples[i] - this.samples[i - 1]);
+        }
+
+        this.samples = filtered;
+        return this;
+    }
+
+    // Generate white noise
+    static WhiteNoise(sampleRate, durationInSeconds) {
+        const samples = Array.from({ length: sampleRate * durationInSeconds }, () => Math.random() * 2 - 1);
+        return new Waveform(samples, sampleRate);
+    }
+}
