@@ -5,7 +5,7 @@ export default function createPercussionNote(option) {
     if (note.isGainValueZero) return null;
 
     const source = note.oscillator;
-    if (this.settings.soundQuality != 3) source.buffer = this.whitenoise;
+    // if (this.settings.soundQuality != 3) source.buffer = this.whitenoise;
     const gainNode = note.gainNode;
     const stopGainNode = note.stopGainNode;
     let start = note.start;
@@ -31,7 +31,7 @@ export default function createPercussionNote(option) {
             getDrumSample(this.context, option.pitch).then(sample => {
                 source.buffer = sample;
             });
-            break
+            break;
         case 1:
             {
                 switch (option.pitch) {
@@ -42,6 +42,7 @@ export default function createPercussionNote(option) {
                     case 36: // Bass Drum
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 0.25;
                             gainNode.gain.setValueAtTime(0, start);
                             gainNode.gain.linearRampToValueAtTime(velocity * 0.7, start + 0.004);
@@ -59,16 +60,17 @@ export default function createPercussionNote(option) {
                     case 38: // Acoustic Snare
                     case 40: // Electric Snare
                         {
-                            const len = option.pitch == 38 ? 0.15 : 0.2;
+                            const len = option.pitch == 38 ? 0.12 : 0.15;
                             // w
+                            source.buffer = this.pinknoise;
                             source.playbackRate.value = 0.7;
-                            gainNode.gain.setValueAtTime(velocity * 0.7, start);
+                            gainNode.gain.setValueAtTime(velocity * 1.4, start);
                             gainNode.gain.linearRampToValueAtTime(0, start+len);
                             stopAudioTime = len;
                             // s
-                            oscillator.frequency.setValueAtTime(option.pitch == 38 ? 160 : 200, start);
-                            oscillator.frequency.linearRampToValueAtTime(option.pitch == 38 ? 120 : 160, start + 0.1);
-                            gainNode2.gain.setValueAtTime(velocity * 3, start);
+                            oscillator.frequency.setValueAtTime(option.pitch == 38 ? 175 : 200, start);
+                            oscillator.frequency.linearRampToValueAtTime(option.pitch == 38 ? 130 : 160, start + 0.1);
+                            gainNode2.gain.setValueAtTime(velocity * 2, start);
                             gainNode2.gain.linearRampToValueAtTime(0, start + 0.1);
                             stopAudioTime2 = 0.1;
                             break;
@@ -83,6 +85,7 @@ export default function createPercussionNote(option) {
                         {
                             const len = option.pitch - 41 + (option.pitch >= 48 ? 1 : 0);
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 0.3 + len / 45;
                             gainNode.gain.setValueAtTime(velocity * 1.5, start);
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.02);
@@ -100,6 +103,7 @@ export default function createPercussionNote(option) {
                     case 44: // Pedal High-Hat
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             if (option.pitch == 42) {
                                 gainNode.gain.setValueAtTime(velocity * 0.3, start);
@@ -117,6 +121,7 @@ export default function createPercussionNote(option) {
                     case 46: // Open Hihat
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(1.35, start);
                             source.playbackRate.linearRampToValueAtTime(1.6, start + 0.1);
                             source.playbackRate.linearRampToValueAtTime(1, start + 0.3);
@@ -133,6 +138,7 @@ export default function createPercussionNote(option) {
                     case 57: // Crash Cymbal 2
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             const r = option.pitch == 49 ? 0.3 : 0.5;
                             const r2 = option.pitch == 49 ? 0.4 : 0.7;
                             source.playbackRate.setValueAtTime(r, start);
@@ -150,6 +156,7 @@ export default function createPercussionNote(option) {
                     case 59: // Ride Cymbal 2
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 0.9, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.35);
@@ -166,6 +173,7 @@ export default function createPercussionNote(option) {
                     case 52: // Chinese Cymbal
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(0.17, start);
                             source.playbackRate.linearRampToValueAtTime(0.25, start + 0.1);
                             source.playbackRate.linearRampToValueAtTime(0.5, start + 0.6);
@@ -183,6 +191,7 @@ export default function createPercussionNote(option) {
                     case 53: // Ride Bell
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(0.6, start);
                             gainNode.gain.setValueAtTime(velocity, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.3);
@@ -198,6 +207,7 @@ export default function createPercussionNote(option) {
                     case 55: // Splash Cymbal
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(0.5, start);
                             source.playbackRate.linearRampToValueAtTime(0.8, start + 0.1);
                             source.playbackRate.linearRampToValueAtTime(1, start + 0.6);
@@ -212,6 +222,7 @@ export default function createPercussionNote(option) {
                     case 56: // Cowbell
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(1, start);
                             let v = option.pitch == 54 ? 1 : 0.4;
                             const len = option.pitch == 54 ? 0.01 : 0;
@@ -231,6 +242,7 @@ export default function createPercussionNote(option) {
                     case 80: // Mute Triangle
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 0.5, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.015);
@@ -246,6 +258,7 @@ export default function createPercussionNote(option) {
                     case 81: // Open Triangle
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 5;
                             gainNode.gain.setValueAtTime(velocity * 0.5, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.08);
@@ -269,6 +282,7 @@ export default function createPercussionNote(option) {
                             const r = p == 60 ? 700 : p == 61 ? 282 : p == 62 ? 385 : p == 63 ? 295 : 210;
                             const len = p == 60 ? 0.08 : p == 61 ? 0.1 : p == 62 ? 0.03 : p == 63 ? 0.12 : 0.15;
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 0.03;
                             gainNode.gain.setValueAtTime(velocity * 1.2, start);
                             stopAudioTime = 0.03;
@@ -303,6 +317,7 @@ export default function createPercussionNote(option) {
                     case 37: // Side Stick
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 0.26;
                             gainNode.gain.setValueAtTime(velocity * 1.5, start);
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.041);
@@ -318,6 +333,7 @@ export default function createPercussionNote(option) {
                     case 39: // Hand Clap
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 0.5;
                             gainNode.gain.setValueAtTime(velocity * 1.3, start);
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.010);
@@ -342,6 +358,7 @@ export default function createPercussionNote(option) {
                     case 54: // Tambourine
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(1, start);
                             let v = option.pitch == 54 ? 1 : 0.4;
                             const len = option.pitch == 54 ? 0.01 : 0;
@@ -361,6 +378,7 @@ export default function createPercussionNote(option) {
                     case 58: // Vibraslap
                         {
                             // w s
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(0.6, start);
                             source.playbackRate.linearRampToValueAtTime(1, start + 0.8);
                             const len = 40;
@@ -386,6 +404,7 @@ export default function createPercussionNote(option) {
                         {
                             const len = option.pitch == 65 ? 0.22 : 0.25;
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(option.pitch == 65 ? 0.25 : 0.22, start);
                             source.playbackRate.linearRampToValueAtTime(option.pitch == 65 ? 0.2 : 0.18, start + len);
                             gainNode.gain.setValueAtTime(velocity * 1.3, start);
@@ -405,6 +424,7 @@ export default function createPercussionNote(option) {
                     case 68: // Low Agogo
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 0.5, start);
                             gainNode.gain.linearRampToValueAtTime(velocity * 0.1, start + 0.02);
@@ -421,6 +441,7 @@ export default function createPercussionNote(option) {
                     case 69: // Cabasa
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 0.3, start);
                             gainNode.gain.linearRampToValueAtTime(velocity * 0.8, start + 0.03);
@@ -434,6 +455,7 @@ export default function createPercussionNote(option) {
                     case 70: // Maracas
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 1.2, start);
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.06);
@@ -467,6 +489,7 @@ export default function createPercussionNote(option) {
                         {
                             // w
                             const len = option.pitch == 73 ? 0.05 : 0.35;
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(option.pitch == 73 ? 0.2 : 0.2, start);
                             source.playbackRate.linearRampToValueAtTime(option.pitch == 73 ? 0.7 : 0.5, start + len);
                             gainNode.gain.value = velocity * 0.2;
@@ -484,6 +507,7 @@ export default function createPercussionNote(option) {
                     case 77: // Low Wood Block
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 0.1;
                             gainNode.gain.setValueAtTime(velocity * 1.2, start);
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.015);
@@ -521,6 +545,7 @@ export default function createPercussionNote(option) {
                     case 27: // High Q
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 1, start);
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.002);
@@ -537,6 +562,7 @@ export default function createPercussionNote(option) {
                     case 28: // Slap
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 1.3, start);
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.010);
@@ -562,6 +588,7 @@ export default function createPercussionNote(option) {
                             const r1 = option.pitch == 29 ? 0.1 : 0.06;
                             const r2 = option.pitch == 29 ? 0.3 : 0.2;
                             const r3 = option.pitch == 29 ? 0.18 : 0.12;
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(r1, start);
                             source.playbackRate.linearRampToValueAtTime(r2, start + t1);
                             source.playbackRate.linearRampToValueAtTime(0, start + t2);
@@ -595,6 +622,7 @@ export default function createPercussionNote(option) {
                     case 31: // Sticks
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(0.4, start);
                             source.playbackRate.linearRampToValueAtTime(0.5, start + 0.015);
                             gainNode.gain.setValueAtTime(velocity * 1.2, start);
@@ -625,6 +653,7 @@ export default function createPercussionNote(option) {
                     case 34: // Metronome Bell
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(0.17, start);
                             source.playbackRate.linearRampToValueAtTime(0.22, start + 0.01);
                             gainNode.gain.setValueAtTime(velocity * 1.5, start);
@@ -645,6 +674,7 @@ export default function createPercussionNote(option) {
                     case 82: // Shaker
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 0.5, start);
                             gainNode.gain.linearRampToValueAtTime(velocity, start + 0.02);
@@ -658,6 +688,7 @@ export default function createPercussionNote(option) {
                     case 83: // Jingle Bell
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(0, start);
                             gainNode.gain.linearRampToValueAtTime(velocity * 1.2, start + 0.015);
@@ -677,6 +708,7 @@ export default function createPercussionNote(option) {
                         {
                             // w s
                             const invert = true;
+                            source.buffer = this.whitenoise;
                             source.playbackRate.value = 1;
                             for (let i = 0; i < 28; i++) {
                                 gainNode.gain.setValueAtTime(velocity * 0.1, start + i / 24 * 0.45);
@@ -692,6 +724,7 @@ export default function createPercussionNote(option) {
                     case 85: // Castanets
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(0.35, start);
                             gainNode.gain.setValueAtTime(velocity * 1.3, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.01);
@@ -707,6 +740,7 @@ export default function createPercussionNote(option) {
                     case 87: // Open Surdo
                         {
                             // w
+                            source.buffer = this.whitenoise;
                             source.playbackRate.setValueAtTime(0.020, start);
                             source.playbackRate.linearRampToValueAtTime(0.015, start + 0.5);
                             gainNode.gain.setValueAtTime(0, start);
@@ -729,9 +763,10 @@ export default function createPercussionNote(option) {
                     }
                 }
             }
-            break
+            break;
 
         default: {
+            source.buffer = this.whitenoise;
             switch (option.pitch) {
                 //  元々のパーカッション音源 //
                 // Bass drum
