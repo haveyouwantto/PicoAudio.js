@@ -54,12 +54,19 @@ export default function init(argsObj) {
     }
 
     this.pinknoise = this.context.createBuffer(2, sampleLength, sampleRate);
-    AudioUtil.fillAudioBuffer(this.pinknoise, generatePinkNoise(sampleLength));
+    AudioUtil.fillAudioBuffer(this.pinknoise, 0, generatePinkNoise(sampleLength));
+    AudioUtil.fillAudioBuffer(this.pinknoise, 1, generatePinkNoise(sampleLength));
 
     this.cymbalnoise = this.context.createBuffer(2, sampleLength, sampleRate);
-    AudioUtil.fillAudioBuffer(this.cymbalnoise, Waveform.WhiteNoise(sampleRate, 1)
-        .highPass(8000)
-        .norm().samples
+    AudioUtil.fillAudioBuffer(this.cymbalnoise, 0,
+        Waveform.WhiteNoise(sampleRate, 1)
+            .highPass(8000)
+            .norm().samples
+    );
+    AudioUtil.fillAudioBuffer(this.cymbalnoise, 1,
+        Waveform.WhiteNoise(sampleRate, 1)
+            .highPass(8000)
+            .norm().samples
     );
 
     // リバーブ用のインパルス応答音声データ作成（てきとう） //
