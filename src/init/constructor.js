@@ -39,7 +39,8 @@ export default function picoAudioConstructor(argsObj) {
         baseLatency: -1, // レイテンシの設定 -1:auto
         soundQuality: 1, // Set the sound quality level: 0 for basic waveform, 1 for FM waveform
         preserveSmfData: false, // Preserve the SMF (Standard MIDI File) data during processing,
-        globalReverb: false
+        globalReverb: false,
+        instrumentAttenuation: 0.83
     };
 
     // argsObjで設定値が指定されていたら上書きする
