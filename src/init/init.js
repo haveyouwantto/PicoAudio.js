@@ -20,6 +20,10 @@ export default function init(argsObj) {
     this.masterGainNode = this.context.createGain();
     this.masterGainNode.gain.value = this.settings.masterVolume;
 
+    this.highFilter = this.context.createBiquadFilter();
+    this.highFilter.frequency.value = 20;
+    this.highFilter.type = 'highpass';
+
     // Add a dynamics compressor to prevent overloading
     this.compressor = this.context.createDynamicsCompressor();
     this.compressor.threshold.value = -12;
@@ -121,7 +125,9 @@ export default function init(argsObj) {
     this.chorusLfoGainNode.connect(this.chorusDelayNode.delayTime);
     this.chorusDelayNode.connect(this.chorusGainNode);
     this.chorusGainNode.connect(this.masterGainNode);
-    // this.masterGainNode.connect(this.context.destination);
+    this.masterGainNode.connect(this.highFilter);
+    this.highFilter.connect(this.compressor);
+    this.compressor.connect(this.context.destination);
     this.chorusOscillator.start(0);
 
     this.setGlobalReverb(this.settings.globalReverb);
