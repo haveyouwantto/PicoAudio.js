@@ -15,6 +15,8 @@ export default function createNote(option) {
     let note2;
 
     // 音色の設定 //
+    gainNode.gain.value *= this.settings.instrumentAttenuation;  // Instrument volume attenuation
+
     switch (this.settings.soundQuality) {
         case -1:
             break;

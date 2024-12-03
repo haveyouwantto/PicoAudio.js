@@ -20,6 +20,10 @@ export default function init(argsObj) {
     this.masterGainNode = this.context.createGain();
     this.masterGainNode.gain.value = this.settings.masterVolume;
 
+    this.highFilter = this.context.createBiquadFilter();
+    this.highFilter.frequency.value = 20;
+    this.highFilter.type = 'highpass';
+
     // Add a dynamics compressor to prevent overloading
     this.compressor = this.context.createDynamicsCompressor();
     this.compressor.threshold.value = -12;
@@ -54,12 +58,19 @@ export default function init(argsObj) {
     }
 
     this.pinknoise = this.context.createBuffer(2, sampleLength, sampleRate);
-    AudioUtil.fillAudioBuffer(this.pinknoise, generatePinkNoise(sampleLength));
+    AudioUtil.fillAudioBuffer(this.pinknoise, 0, generatePinkNoise(sampleLength));
+    AudioUtil.fillAudioBuffer(this.pinknoise, 1, generatePinkNoise(sampleLength));
 
     this.cymbalnoise = this.context.createBuffer(2, sampleLength, sampleRate);
-    AudioUtil.fillAudioBuffer(this.cymbalnoise, Waveform.WhiteNoise(sampleRate, 1)
-        .highPass(8000)
-        .norm().samples
+    AudioUtil.fillAudioBuffer(this.cymbalnoise, 0,
+        Waveform.WhiteNoise(sampleRate, 1)
+            .highPass(8000)
+            .norm().samples
+    );
+    AudioUtil.fillAudioBuffer(this.cymbalnoise, 1,
+        Waveform.WhiteNoise(sampleRate, 1)
+            .highPass(8000)
+            .norm().samples
     );
 
     // リバーブ用のインパルス応答音声データ作成（てきとう） //
@@ -114,7 +125,9 @@ export default function init(argsObj) {
     this.chorusLfoGainNode.connect(this.chorusDelayNode.delayTime);
     this.chorusDelayNode.connect(this.chorusGainNode);
     this.chorusGainNode.connect(this.masterGainNode);
-    // this.masterGainNode.connect(this.context.destination);
+    this.masterGainNode.connect(this.highFilter);
+    this.highFilter.connect(this.compressor);
+    this.compressor.connect(this.context.destination);
     this.chorusOscillator.start(0);
 
     this.setGlobalReverb(this.settings.globalReverb);
