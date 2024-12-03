@@ -1,4 +1,4 @@
-import { getWave, envelope, quickfadeArray, findClosestNumberIndex } from "./periodic-wave-man";
+import { getWave, quickfadeArray, findClosestNumberIndex } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
 
 export default function createNote(option) {
@@ -76,7 +76,10 @@ export default function createNote(option) {
                     break;
                 // Otherwise use periodic waves
                 default:
-                    oscillator.setPeriodicWave(getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch)));
+                    let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+                    oscillator.setPeriodicWave(inst.wave);
+                    // gainNode.gain.value = inst.mul;
+                    break;
             }
             break;
 
@@ -179,8 +182,9 @@ export default function createNote(option) {
                     this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
                     break;
                 default:
+                    let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
                     // Apply envelope to note
-                    let instEnvelope = envelope[option.instrument];
+                    let instEnvelope = inst.adsr;
                     const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
                     let velocity = gainNode.gain.value * 1.3;
                     const isPluck = quickfadeArray[option.instrument];
@@ -192,7 +196,7 @@ export default function createNote(option) {
 
                     // Decay phase
                     if (isPluck) {
-                        const decayTime = decay * Math.pow(2, (69 - option.pitch) / 24);
+                        const decayTime = decay; //* Math.pow(2, (69 - option.pitch) / 24);
                         gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
                     } else {
                         gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
