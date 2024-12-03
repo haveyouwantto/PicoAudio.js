@@ -65,22 +65,9 @@ export default function createNote(option) {
             break;
 
         case 1:
-            switch (option.instrument) {
-                // Use exact representations of square and sawtooth waves
-                case 80:
-                    oscillator.type = "square";
-                    gainNode.gain.value *= 0.8;
-                    break;
-                case 81:
-                    oscillator.type = "sawtooth";
-                    break;
-                // Otherwise use periodic waves
-                default:
-                    let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
-                    oscillator.setPeriodicWave(inst.wave);
-                    // gainNode.gain.value = inst.mul;
-                    break;
-            }
+            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+            oscillator.setPeriodicWave(inst.wave);
+            gainNode.gain.value = inst.mul;
             break;
 
         case 3:
