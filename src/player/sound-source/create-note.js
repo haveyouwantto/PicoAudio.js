@@ -69,7 +69,7 @@ export default function createNote(option) {
         case 1:
             let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
             oscillator.setPeriodicWave(inst.wave);
-            gainNode.gain.value = inst.mul;
+            gainNode.gain.value *= inst.mul;
             break;
 
         case 3:
