@@ -185,7 +185,7 @@ export default function createNote(option) {
 
                     // Decay phase
                     if (isPluck) {
-                        const decayTime = decay; //* Math.pow(2, (69 - option.pitch) / 24);
+                        const decayTime = decay * Math.pow(2, (69 - option.pitch) / 24);
                         gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
                     } else {
                         gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
