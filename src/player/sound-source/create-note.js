@@ -202,8 +202,9 @@ export default function createNote(option) {
             break;
 
         case 3:
+            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
             // Apply envelope to note
-            let instEnvelope = envelope[option.instrument];
+            let instEnvelope = inst.adsr;
             const release = instEnvelope[3];
             let velocity = gainNode.gain.value * 1.5;
 
