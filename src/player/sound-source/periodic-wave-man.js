@@ -172,8 +172,6 @@ function dequantize(uint8Arr) {
     });
 }
 
-const muls = [1.2, 1.08, 1.03, 0.897, 0.618];
-
 function parseInstruments(arrayBuffer) {
     var dataView = new DataView(arrayBuffer);
     var instruments = [];
@@ -188,9 +186,9 @@ function parseInstruments(arrayBuffer) {
                 mul: 0, data: [], adsr: []
             };
 
-            // const loudness = -(255 - dataView.getUint8(offset)) / 4;
-            programData.mul = muls[octave];
-            // offset++;
+            const loudness = -(255 - dataView.getUint8(offset)) / 4;
+            programData.mul = 10**(((-12)-loudness)/20)//muls[octave];
+            offset++;
 
             for (let i = 0; i < 4; i++) {
                 programData.adsr.push(dataView.getUint8(offset) / 255 * 5);
