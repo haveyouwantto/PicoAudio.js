@@ -1,4 +1,4 @@
-import { getWave, quickfadeArray, findClosestNumberIndex } from "./periodic-wave-man";
+import { getWave, quickfadeArray, findClosestNumberIndex, getVolumeMul } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
 
 export default function createNote(option) {
@@ -69,7 +69,7 @@ export default function createNote(option) {
         case 1:
             let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
             oscillator.setPeriodicWave(inst.wave);
-            gainNode.gain.value *= inst.mul;
+            gainNode.gain.value *= getVolumeMul(option.pitch);
             break;
 
         case 3:

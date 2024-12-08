@@ -285,4 +285,12 @@ function findClosestNumberIndex(target) {
     }
 }
 
+export function getVolumeMul(note) {
+    const val = (note - 45) / 12;
+    if (val <= 0) return volumes[0];
+    if (val >= volumes.length - 1) return volumes[volumes.length - 1];
+    const i = Math.floor(val);
+    return volumes[i] + (volumes[i + 1] - volumes[i]) * (val - i);
+}
+
 export { quickfadeArray, findClosestNumberIndex };
