@@ -64,7 +64,7 @@ export default function createPercussionNote(option) {
                             // w
                             source.buffer = this.pinknoise;
                             source.playbackRate.value = 0.7;
-                            gainNode.gain.setValueAtTime(velocity * 1.6, start);
+                            gainNode.gain.setValueAtTime(velocity * 2.5, start);
                             gainNode.gain.linearRampToValueAtTime(0, start+len);
                             stopAudioTime = len;
                             // s
