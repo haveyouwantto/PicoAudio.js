@@ -65,13 +65,13 @@ export default function createPercussionNote(option) {
                             source.buffer = this.pinknoise;
                             source.playbackRate.value = 0.7;
                             gainNode.gain.setValueAtTime(velocity * 2, start);
-                            gainNode.gain.linearRampToValueAtTime(0, start+len);
+                            gainNode.gain.setTargetAtTime(0, start, len * 0.5);
                             stopAudioTime = len;
                             // s
                             oscillator.frequency.setValueAtTime(option.pitch == 38 ? 175 : 200, start);
                             oscillator.frequency.linearRampToValueAtTime(option.pitch == 38 ? 130 : 160, start + 0.1);
                             gainNode2.gain.setValueAtTime(velocity * 2.5, start);
-                            gainNode2.gain.linearRampToValueAtTime(0, start + 0.1);
+                            gainNode2.gain.linearRampToValueAtTime(0, start + 0.2);
                             stopAudioTime2 = 0.1;
                             break;
                         }
