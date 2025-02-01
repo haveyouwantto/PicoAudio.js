@@ -1,5 +1,8 @@
 import RandomUtil from '../util/random-util.js';
 import InterpolationUtil from '../util/interpolation-util.js';
+import { generatePinkNoise } from '../player/audio/sound-gen.js';
+import AudioUtil from '../util/audio-util.js';
+import Waveform from '../player/audio/dsp.js';
 
 export default function init(argsObj) {
     if (this.isStarted) return;
@@ -17,6 +20,10 @@ export default function init(argsObj) {
     this.masterGainNode = this.context.createGain();
     this.masterGainNode.gain.value = this.settings.masterVolume;
 
+    this.highFilter = this.context.createBiquadFilter();
+    this.highFilter.frequency.value = 20;
+    this.highFilter.type = 'highpass';
+
     // Add a dynamics compressor to prevent overloading
     this.compressor = this.context.createDynamicsCompressor();
     this.compressor.threshold.value = -12;
@@ -25,6 +32,9 @@ export default function init(argsObj) {
     const sampleRate = this.context.sampleRate;
     const sampleRateVT = sampleRate >= 48000 ? 48000 : sampleRate;
 
+    // Noise generation
+    const seLength = 1;
+    const sampleLength = sampleRate * seLength;
     // ホワイトノイズ //
     if (picoAudio && picoAudio.whitenoise) { // 使いまわし
         this.whitenoise = picoAudio.whitenoise;
@@ -32,8 +42,6 @@ export default function init(argsObj) {
         RandomUtil.resetSeed(); // 乱数パターンを固定にする（Math.random()を使わない）
         // 再生環境のサンプルレートによって音が変わってしまうので //
         // 一旦仮想サンプルレートで音源を作成する //
-        const seLength = 1;
-        const sampleLength = sampleRate * seLength;
         const sampleLengthVT = sampleRateVT * seLength;
         const vtBufs = [];
         for (let ch = 0; ch < 2; ch++) {
@@ -48,6 +56,22 @@ export default function init(argsObj) {
         this.whitenoise = this.context.createBuffer(2, sampleLength, sampleRate);
         InterpolationUtil.lerpWave(this.whitenoise, vtBufs);
     }
+
+    this.pinknoise = this.context.createBuffer(2, sampleLength, sampleRate);
+    AudioUtil.fillAudioBuffer(this.pinknoise, 0, generatePinkNoise(sampleLength));
+    AudioUtil.fillAudioBuffer(this.pinknoise, 1, generatePinkNoise(sampleLength));
+
+    this.cymbalnoise = this.context.createBuffer(2, sampleLength, sampleRate);
+    AudioUtil.fillAudioBuffer(this.cymbalnoise, 0,
+        Waveform.WhiteNoise(sampleRate, 1)
+            .highPass(8000)
+            .norm().samples
+    );
+    AudioUtil.fillAudioBuffer(this.cymbalnoise, 1,
+        Waveform.WhiteNoise(sampleRate, 1)
+            .highPass(8000)
+            .norm().samples
+    );
 
     // リバーブ用のインパルス応答音声データ作成（てきとう） //
     if (picoAudio && picoAudio.impulseResponse) { // 使いまわし
@@ -101,7 +125,9 @@ export default function init(argsObj) {
     this.chorusLfoGainNode.connect(this.chorusDelayNode.delayTime);
     this.chorusDelayNode.connect(this.chorusGainNode);
     this.chorusGainNode.connect(this.masterGainNode);
-    // this.masterGainNode.connect(this.context.destination);
+    this.masterGainNode.connect(this.highFilter);
+    this.highFilter.connect(this.compressor);
+    this.compressor.connect(this.context.destination);
     this.chorusOscillator.start(0);
 
     this.setGlobalReverb(this.settings.globalReverb);

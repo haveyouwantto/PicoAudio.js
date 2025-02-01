@@ -1,4 +1,4 @@
-import { getWave, envelope, quickfadeArray, findClosestNumberIndex } from "./periodic-wave-man";
+import { getWave, quickfadeArray, findClosestNumberIndex, getVolumeMul } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
 
 export default function createNote(option) {
@@ -15,6 +15,8 @@ export default function createNote(option) {
     let note2;
 
     // 音色の設定 //
+    gainNode.gain.value *= this.settings.instrumentAttenuation;  // Instrument volume attenuation
+
     switch (this.settings.soundQuality) {
         case -1:
             break;
@@ -65,19 +67,9 @@ export default function createNote(option) {
             break;
 
         case 1:
-            switch (option.instrument) {
-                // Use exact representations of square and sawtooth waves
-                case 80:
-                    oscillator.type = "square";
-                    gainNode.gain.value *= 0.8;
-                    break;
-                case 81:
-                    oscillator.type = "sawtooth";
-                    break;
-                // Otherwise use periodic waves
-                default:
-                    oscillator.setPeriodicWave(getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch)));
-            }
+            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+            oscillator.setPeriodicWave(inst.wave);
+            if (this.settings.enableEqualizer) gainNode.gain.value *= getVolumeMul(option.pitch);
             break;
 
         case 3:
@@ -170,47 +162,41 @@ export default function createNote(option) {
             }
             break;
         case -1:
-        case 1:
-            switch (option.instrument) {
-                case 80:
-                case 81:
-                    gainNode.gain.value *= 1.1;
-                    gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
-                    this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
-                    break;
-                default:
-                    // Apply envelope to note
-                    let instEnvelope = envelope[option.instrument];
-                    const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-                    let velocity = gainNode.gain.value * 1.3;
-                    const isPluck = quickfadeArray[option.instrument];
-                    const attackClamped = Math.max(attack, 0.001);
+        case 1: {
+            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+            // Apply envelope to note
+            let instEnvelope = inst.adsr;
+            const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
+            let velocity = gainNode.gain.value * 1.3;
+            const isPluck = quickfadeArray[option.instrument];
+            const attackClamped = Math.max(attack, 0.001);
 
-                    gainNode.gain.setValueAtTime(0, note.start);
-                    // Attack phase
-                    gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
+            gainNode.gain.setValueAtTime(0, note.start);
+            // Attack phase
+            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
 
-                    // Decay phase
-                    if (isPluck) {
-                        const decayTime = decay * Math.pow(2, (69 - option.pitch) / 24);
-                        gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
-                    } else {
-                        gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
-                    }
-
-                    // Sustain phase (no explicit scheduling needed)
-
-                    // Release phase
-                    const releaseClamped = Math.min(release, 0.25);
-                    gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
-
-                    this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
+            // Decay phase
+            if (isPluck) {
+                const decayTime = decay * Math.pow(2, (69 - option.pitch) / 24);
+                gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
+            } else {
+                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
             }
+
+            // Sustain phase (no explicit scheduling needed)
+
+            // Release phase
+            const releaseClamped = Math.min(release, 0.25);
+            gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
+
+            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
+        }
             break;
 
         case 3:
+            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
             // Apply envelope to note
-            let instEnvelope = envelope[option.instrument];
+            let instEnvelope = inst.adsr;
             const release = instEnvelope[3];
             let velocity = gainNode.gain.value * 1.5;
 

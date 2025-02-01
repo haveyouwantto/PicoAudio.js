@@ -242,28 +242,9 @@ class PicoAudio {
         return render.call(this)
     }
 
+    /**  Deprecated */
     setGlobalReverb(value) {
-        if (value) {
-            this.splitter = this.context.createChannelSplitter()
-            this.merger = this.context.createChannelMerger()
-
-            this.masterGainNode.disconnect(this.compressor);
-            this.masterGainNode.connect(this.splitter);
-
-            this.delayer = this.context.createDelay();
-            this.delayer.connect(this.merger, 0, 1);
-            this.delayer.delayTime.value = 0.015;
-
-            this.splitter.connect(this.merger, 0, 0)
-            this.splitter.connect(this.delayer, 1)
-
-            this.merger.connect(this.compressor)
-        } else {
-            this.masterGainNode.disconnect(this.splitter);
-            this.masterGainNode.connect(this.compressor);
-        }
-        this.settings.globalReverb = value;
-        this.compressor.connect(this.context.destination);
+        console.warn("setGlobalReverb() is deprecated");
     }
 
     loadWaves(buffer) {
