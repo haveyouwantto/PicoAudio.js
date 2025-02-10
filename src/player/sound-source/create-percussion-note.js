@@ -72,7 +72,7 @@ export default function createPercussionNote(option) {
                             oscillator.frequency.setTargetAtTime(option.pitch == 38 ? 130 : 160, start, 0.07);
                             gainNode2.gain.setValueAtTime(velocity * 2.5, start);
                             gainNode2.gain.setTargetAtTime(0, start, 0.07);
-                            stopAudioTime2 = 0.1;
+                            stopAudioTime2 = 0.2;
                             break;
                         }
                     // Toms
