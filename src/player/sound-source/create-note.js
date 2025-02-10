@@ -167,8 +167,8 @@ export default function createNote(option) {
             // Apply envelope to note
             let instEnvelope = inst.adsr;
             const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-            let velocity = gainNode.gain.value * 1.3;
             const isPluck = quickfadeArray[option.instrument];
+            let velocity = gainNode.gain.value;
             const attackClamped = Math.max(attack, 0.001);
 
             gainNode.gain.setValueAtTime(0, note.start);
