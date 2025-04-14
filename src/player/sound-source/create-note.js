@@ -1,3 +1,4 @@
+import InterpolationUtil from "../../util/interpolation-util";
 import { getWave, quickfadeArray, findClosestNumberIndex, getVolumeMul, vibrato } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
 
@@ -174,14 +175,29 @@ export default function createNote(option) {
             // Setup vibrato
             try {
                 let vibratoSample;
-                if (this.vibratoCache[option.instrument]) {
-                    vibratoSample = this.vibratoCache[option.instrument];
+                const songStartTime = this.states.startTime;
+                if (option.expression) {
+                    let xArray = []
+                    let valueArray = []
+                    option.expression.forEach(element => {
+                        xArray.push(element.time - note.start + songStartTime)
+                        valueArray.push(Math.pow(element.value / 127, 2))
+                    });
+                    console.log(xArray, valueArray)
+                    vibratoSample = this.vibratoSamples.map((e, i) => {
+                        let t = i / this.context.sampleRate * 100;
+                        return e * vibrato[option.instrument] * InterpolationUtil.linearInterp(xArray, valueArray, t)
+                    });
                 } else {
-                    vibratoSample = this.vibratoSamples.map(e => e * vibrato[option.instrument]);
-                    this.vibratoCache[option.instrument] = vibratoSample;
+                    if (this.vibratoCache[option.instrument]) {
+                        vibratoSample = this.vibratoCache[option.instrument];
+                    } else {
+                        vibratoSample = this.vibratoSamples.map(e => e * vibrato[option.instrument]);
+                        this.vibratoCache[option.instrument] = vibratoSample;
+                    }
                 }
                 oscillator.detune.setValueCurveAtTime(vibratoSample, note.start, 10);
-            } catch (e) { }
+            } catch (e) { console.error(e) }
 
             gainNode.gain.setValueAtTime(0, note.start);
             // Attack phase

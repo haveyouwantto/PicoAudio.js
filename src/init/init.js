@@ -74,9 +74,9 @@ export default function init(argsObj) {
     );
 
     // Fill pre-calculated vibrato samples
-    this.vibratoSamples = Array.from({ length: sampleRate }).map((e, i) => {
+    this.vibratoSamples = Array.from({ length: sampleRate * 0.1 }).map((e, i) => {
         const t = i / sampleRate;
-        return Math.sin(2 * Math.PI * 60 * t)
+        return Math.sin(2 * Math.PI * 600 * t)
     })
 
     this.vibratoCache = []
