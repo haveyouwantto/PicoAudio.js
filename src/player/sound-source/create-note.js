@@ -1,4 +1,4 @@
-import { getWave, quickfadeArray, findClosestNumberIndex, getVolumeMul } from "./periodic-wave-man";
+import { getWave, quickfadeArray, findClosestNumberIndex, getVolumeMul, vibrato } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
 
 export default function createNote(option) {
@@ -170,6 +170,18 @@ export default function createNote(option) {
             const isPluck = quickfadeArray[option.instrument];
             let velocity = gainNode.gain.value;
             const attackClamped = Math.max(attack, 0.001);
+
+            // Setup vibrato
+            try {
+                let vibratoSample;
+                if (this.vibratoCache[option.instrument]) {
+                    vibratoSample = this.vibratoCache[option.instrument];
+                } else {
+                    vibratoSample = this.vibratoSamples.map(e => e * vibrato[option.instrument]);
+                    this.vibratoCache[option.instrument] = vibratoSample;
+                }
+                oscillator.detune.setValueCurveAtTime(vibratoSample, note.start, 10);
+            } catch (e) { }
 
             gainNode.gain.setValueAtTime(0, note.start);
             // Attack phase

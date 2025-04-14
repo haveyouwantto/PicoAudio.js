@@ -73,6 +73,14 @@ export default function init(argsObj) {
             .norm().samples
     );
 
+    // Fill pre-calculated vibrato samples
+    this.vibratoSamples = Array.from({ length: sampleRate }).map((e, i) => {
+        const t = i / sampleRate;
+        return Math.sin(2 * Math.PI * 60 * t)
+    })
+
+    this.vibratoCache = []
+
     // リバーブ用のインパルス応答音声データ作成（てきとう） //
     if (picoAudio && picoAudio.impulseResponse) { // 使いまわし
         this.impulseResponse = picoAudio.impulseResponse;
