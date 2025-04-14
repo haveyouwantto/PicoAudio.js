@@ -172,32 +172,48 @@ export default function createNote(option) {
             let velocity = gainNode.gain.value;
             const attackClamped = Math.max(attack, 0.001);
 
-            // Setup vibrato
+            // Setup vibrato effect
             try {
                 let vibratoSample;
                 const songStartTime = this.states.startTime;
+
+                // If expression data exists (for dynamic vibrato)
                 if (option.expression) {
-                    let xArray = []
-                    let valueArray = []
+                    let xArray = []; // Time points
+                    let valueArray = []; // Vibrato strength values
+
+                    // Prepare time and value arrays from expression data
                     option.expression.forEach(element => {
-                        xArray.push(element.time - note.start + songStartTime)
-                        valueArray.push(Math.pow(element.value / 127, 2))
+                        xArray.push(element.time - note.start + songStartTime);
+                        valueArray.push(Math.pow(element.value / 127, 2)); // Convert MIDI value to strength
                     });
-                    console.log(xArray, valueArray)
+
+                    console.log(xArray, valueArray);
+
+                    // Create dynamic vibrato samples by interpolating expression values
                     vibratoSample = this.vibratoSamples.map((e, i) => {
                         let t = i / this.context.sampleRate * 100;
-                        return e * vibrato[option.instrument] * InterpolationUtil.linearInterp(xArray, valueArray, t)
+                        return e * vibrato[option.instrument] * InterpolationUtil.linearInterp(xArray, valueArray, t);
                     });
-                } else {
+                }
+                // If no expression data (static vibrato)
+                else {
+                    // Use cached vibrato if available
                     if (this.vibratoCache[option.instrument]) {
                         vibratoSample = this.vibratoCache[option.instrument];
-                    } else {
+                    }
+                    // Create new vibrato samples and cache them
+                    else {
                         vibratoSample = this.vibratoSamples.map(e => e * vibrato[option.instrument]);
                         this.vibratoCache[option.instrument] = vibratoSample;
                     }
                 }
+
+                // Apply the vibrato effect to the oscillator
                 oscillator.detune.setValueCurveAtTime(vibratoSample, note.start, 10);
-            } catch (e) { console.error(e) }
+            } catch (e) {
+                console.error(e); // Log any errors
+            }
 
             gainNode.gain.setValueAtTime(0, note.start);
             // Attack phase

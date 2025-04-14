@@ -39,16 +39,16 @@ export default class InterpolationUtil {
     }
 
     static linearInterp(xArray, valueArray, t) {
-        // xArray: x 坐标数组，需要递增
-        // valueArray: 对应 x 坐标的值数组
-        // t: 要插值的 x 坐标
+        // xArray: Array of x-coordinates, must be monotonically increasing
+        // valueArray: Array of corresponding values for x-coordinates
+        // t: The x-coordinate to interpolate
 
-        // 检查数组长度是否一致
+        // Check if the array lengths are equal
         if (xArray.length !== valueArray.length) {
             throw new Error("xArray and valueArray must have the same length");
         }
 
-        // 使用二分查找找到 t 所在的区间
+        // Use binary search to find the interval containing t
         let low = 0;
         let high = xArray.length - 1;
         let index = -1;
@@ -63,7 +63,7 @@ export default class InterpolationUtil {
             }
         }
 
-        // 如果 t 超出 xArray 的范围
+        // If t is out of xArray's range
         if (index === -1) {
             return valueArray[0];
         }
@@ -71,10 +71,10 @@ export default class InterpolationUtil {
             return valueArray[xArray.length - 1];
         }
 
-        // 计算插值比例
+        // Calculate the interpolation ratio
         const t0 = (t - xArray[index]) / (xArray[index + 1] - xArray[index]);
 
-        // 进行线性插值
+        // Perform linear interpolation
         const result = valueArray[index] + (valueArray[index + 1] - valueArray[index]) * t0;
 
         return result;
