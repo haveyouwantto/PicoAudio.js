@@ -188,8 +188,6 @@ export default function createNote(option) {
                         valueArray.push(Math.pow(element.value / 127, 2)); // Convert MIDI value to strength
                     });
 
-                    console.log(xArray, valueArray);
-
                     // Create dynamic vibrato samples by interpolating expression values
                     vibratoSample = this.vibratoSamples.map((e, i) => {
                         let t = i / this.context.sampleRate * 100;
