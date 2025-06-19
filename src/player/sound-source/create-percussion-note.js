@@ -45,14 +45,14 @@ export default function createPercussionNote(option) {
                             source.buffer = this.whitenoise;
                             source.playbackRate.value = 0.25;
                             gainNode.gain.setValueAtTime(0, start);
-                            gainNode.gain.linearRampToValueAtTime(velocity * 0.84, start + 0.004);
+                            gainNode.gain.linearRampToValueAtTime(velocity * 0.7, start + 0.004);
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.008);
                             stopAudioTime = 0.008;
                             // s
                             oscillator.frequency.setValueAtTime(option.pitch == 35 ? 90 : 160, start);
                             oscillator.frequency.linearRampToValueAtTime(40, start + 0.08);
                             gainNode2.gain.setValueAtTime(0, start);
-                            gainNode2.gain.linearRampToValueAtTime(velocity * 3.6, start + 0.02);
+                            gainNode2.gain.linearRampToValueAtTime(velocity * 3, start + 0.02);
                             gainNode2.gain.linearRampToValueAtTime(0, start + 0.08);
                             stopAudioTime2 = 0.08;
                             break;
@@ -64,13 +64,13 @@ export default function createPercussionNote(option) {
                             // w
                             source.buffer = this.pinknoise;
                             source.playbackRate.value = 0.7;
-                            gainNode.gain.setValueAtTime(velocity * 2.88, start);
+                            gainNode.gain.setValueAtTime(velocity * 2.4, start);
                             gainNode.gain.setTargetAtTime(0, start, len * 0.4);
                             stopAudioTime = len;
                             // s
-                            oscillator.frequency.setValueAtTime(option.pitch == 38 ? 140 : 165, start);
-                            oscillator.frequency.setTargetAtTime(option.pitch == 38 ? 130 : 160, start, 0.07);
-                            gainNode2.gain.setValueAtTime(velocity * 3.6, start);
+                            oscillator.frequency.setValueAtTime(option.pitch == 38 ? 150 : 175, start);
+                            oscillator.frequency.setTargetAtTime(option.pitch == 38 ? 140 : 160, start, 0.07);
+                            gainNode2.gain.setValueAtTime(velocity * 3, start);
                             gainNode2.gain.setTargetAtTime(0, start, 0.07);
                             stopAudioTime2 = 0.2;
                             break;
