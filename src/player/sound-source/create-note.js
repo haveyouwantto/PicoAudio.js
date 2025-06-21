@@ -98,7 +98,7 @@ export default function createNote(option) {
             getSample(this.context, option.instrument, octave2).then(sample => {
                 oscillator.buffer = sample;
             });
-            let baseNote2 = 45 + octave * 12;
+            let baseNote2 = 45 + octave2 * 12;
             oscillator.loopStart = 1;
             oscillator.basePitch = (option.pitch - baseNote2) * 100;
             oscillator.detune.value = oscillator.basePitch;
@@ -337,6 +337,7 @@ export default function createNote(option) {
             gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
 
             this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
+            break
     }
 
     // 音をストップさせる関数を返す //
