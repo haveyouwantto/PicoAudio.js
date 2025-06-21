@@ -1,9 +1,9 @@
 import InterpolationUtil from "../../util/interpolation-util";
-import { getWave, quickfadeArray, findClosestNumberIndex, getVolumeMul, vibrato } from "./periodic-wave-man";
+import { getWave, quickfadeArray, findClosestNumberIndex, getVolumeMul, vibrato, getKSSampler } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
 
 export default function createNote(option) {
-    const isBuffer = this.settings.soundQuality == 3;
+    const isBuffer = this.settings.soundQuality >= 2;
     const note = this.createBaseNote(option, isBuffer, true, false, true); // oscillatorのstopはこちらで実行するよう指定
     if (note.isGainValueZero) return null;
 
@@ -73,15 +73,34 @@ export default function createNote(option) {
             if (this.settings.enableEqualizer) gainNode.gain.value *= getVolumeMul(option.pitch);
             break;
 
+        case 2:
+            let samples = getKSSampler(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+            if (!samples) return null; // サンプルが取得できなかった場合はnullを返す
+            oscillator.buffer = samples.buffer;
+
+            // get the base pitch and detune value
+            
+            const octave = findClosestNumberIndex(option.pitch);
+            let baseNote = 45 + octave * 12;
+            oscillator.basePitch = (option.pitch - baseNote) * 100;
+
+            // calculate static detune value
+            let baseFrequency = this.settings.basePitch * Math.pow(2, (octave - 2));
+            oscillator.playbackRate.setValueAtTime(baseFrequency / samples.frequency, note.start);
+            oscillator.detune.value = oscillator.basePitch;
+            oscillator.loop = false;
+            if (this.settings.enableEqualizer) gainNode.gain.value *= getVolumeMul(option.pitch);
+            break;
+
         case 3:
             oscillator.loop = !quickfadeArray[option.instrument];
-            const octave = findClosestNumberIndex(option.pitch);
-            getSample(this.context, option.instrument, octave).then(sample => {
+            const octave2 = findClosestNumberIndex(option.pitch);
+            getSample(this.context, option.instrument, octave2).then(sample => {
                 oscillator.buffer = sample;
             });
-            const baseNote = 45 + octave * 12;
+            let baseNote2 = 45 + octave * 12;
             oscillator.loopStart = 1;
-            oscillator.basePitch = (option.pitch - baseNote) * 100;
+            oscillator.basePitch = (option.pitch - baseNote2) * 100;
             oscillator.detune.value = oscillator.basePitch;
             break;
     }
@@ -234,6 +253,75 @@ export default function createNote(option) {
             this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
         }
             break;
+
+        case 2:
+             {
+            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+            // Apply envelope to note
+            let instEnvelope = inst.adsr;
+            const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
+            let velocity = gainNode.gain.value;
+            const attackClamped = Math.max(attack, 0.001);
+
+            // // Setup vibrato effect
+            // try {
+            //     let vibratoSample;
+            //     const songStartTime = this.states.startTime;
+
+            //     // If expression data exists (for dynamic vibrato)
+            //     if (option.expression) {
+            //         let xArray = []; // Time points
+            //         let valueArray = []; // Vibrato strength values
+
+            //         // Prepare time and value arrays from expression data
+            //         option.expression.forEach(element => {
+            //             xArray.push(element.time - note.start + songStartTime);
+            //             valueArray.push(Math.pow(element.value / 127, 2)); // Convert MIDI value to strength
+            //         });
+
+            //         // Create dynamic vibrato samples by interpolating expression values
+            //         vibratoSample = this.vibratoSamples.map((e, i) => {
+            //             let t = i / this.context.sampleRate * 100;
+            //             return e * vibrato[option.instrument] * InterpolationUtil.linearInterp(xArray, valueArray, t);
+            //         });
+            //     }
+            //     // If no expression data (static vibrato)
+            //     else {
+            //         // Use cached vibrato if available
+            //         if (this.vibratoCache[option.instrument]) {
+            //             vibratoSample = this.vibratoCache[option.instrument];
+            //         }
+            //         // Create new vibrato samples and cache them
+            //         else {
+            //             vibratoSample = this.vibratoSamples.map(e => e * vibrato[option.instrument]);
+            //             this.vibratoCache[option.instrument] = vibratoSample;
+            //         }
+            //     }
+
+            //     // Apply the vibrato effect to the oscillator
+            //     oscillator.detune.setValueCurveAtTime(vibratoSample, note.start, 10);
+            // } catch (e) {
+            //     console.error(e); // Log any errors
+            // }
+
+            gainNode.gain.setValueAtTime(0, note.start);
+            // Attack phase
+            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
+
+            
+            // Decay phase
+            gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
+
+            // Sustain phase (no explicit scheduling needed)
+
+            // Release phase
+            const releaseClamped = Math.min(release, 0.25);
+            gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
+
+            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
+        }
+            break;
+            
 
         case 3:
             let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));

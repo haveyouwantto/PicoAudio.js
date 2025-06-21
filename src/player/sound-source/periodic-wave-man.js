@@ -1,4 +1,5 @@
 import defaultWave from "./default-wave";
+import { ksSampler } from "./ks-sampler";
 
 const quickfadeArray = [
     // Piano
@@ -423,6 +424,37 @@ export function getVolumeMul(note) {
     if (val >= volumes.length - 1) return volumes[volumes.length - 1];
     const i = Math.floor(val);
     return volumes[i] + (volumes[i + 1] - volumes[i]) * (val - i);
+}
+
+export function getKSSampler(context, instId, octave = 2) {
+    let inst = instruments[octave][instId];
+
+    // Calculate the actual frequency of the sample
+    const karplusLength = Math.floor(context.sampleRate / 440); 
+    let frequency = 1 / (karplusLength / context.sampleRate);
+    let buffer;
+
+    // Check if the waveform for the given instrument and octave is already cached
+    if (inst.ksSampler) {
+        // If cached, return the cached sampler
+        buffer = inst.ksSampler;
+    } else {
+        // If not cached, create the Karplus-Strong sampler
+        let decay = quickfadeArray[instId];
+        let samples = ksSampler(inst.data, context.sampleRate, 4, decay, karplusLength);
+
+
+        buffer = context.createBuffer(4, samples.length, context.sampleRate);
+        // Fill the buffer with the samples
+        buffer.copyToChannel(samples, 0);
+        // Create a Karplus-Strong sampler using the context
+        inst.ksSampler = buffer;
+        // Return the Karplus-Strong sampler
+    }
+    return {
+        buffer: buffer,
+        frequency: frequency,
+    };
 }
 
 export { quickfadeArray, findClosestNumberIndex, vibrato };

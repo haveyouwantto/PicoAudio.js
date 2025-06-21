@@ -33,6 +33,7 @@ export default function createPercussionNote(option) {
             });
             break;
         case 1:
+        case 2:
             {
                 switch (option.pitch) {
                     // 新しいパーカッション音源（旧音源の置き換え） //
