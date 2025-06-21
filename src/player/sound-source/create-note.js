@@ -79,7 +79,7 @@ export default function createNote(option) {
             oscillator.buffer = samples.buffer;
 
             // get the base pitch and detune value
-            
+
             const octave = findClosestNumberIndex(option.pitch);
             let baseNote = 45 + octave * 12;
             oscillator.basePitch = (option.pitch - baseNote) * 100;
@@ -255,73 +255,73 @@ export default function createNote(option) {
             break;
 
         case 2:
-             {
-            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
-            // Apply envelope to note
-            let instEnvelope = inst.adsr;
-            const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-            let velocity = gainNode.gain.value * 1.5;
-            const attackClamped = Math.max(attack, 0.001);
+            {
+                let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+                // Apply envelope to note
+                let instEnvelope = inst.adsr;
+                const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
+                let velocity = gainNode.gain.value * quickfadeArray[option.instrument] ? 2 : 1.5;
+                const attackClamped = Math.max(attack, 0.001);
 
-            // // Setup vibrato effect
-            // try {
-            //     let vibratoSample;
-            //     const songStartTime = this.states.startTime;
+                // // Setup vibrato effect
+                // try {
+                //     let vibratoSample;
+                //     const songStartTime = this.states.startTime;
 
-            //     // If expression data exists (for dynamic vibrato)
-            //     if (option.expression) {
-            //         let xArray = []; // Time points
-            //         let valueArray = []; // Vibrato strength values
+                //     // If expression data exists (for dynamic vibrato)
+                //     if (option.expression) {
+                //         let xArray = []; // Time points
+                //         let valueArray = []; // Vibrato strength values
 
-            //         // Prepare time and value arrays from expression data
-            //         option.expression.forEach(element => {
-            //             xArray.push(element.time - note.start + songStartTime);
-            //             valueArray.push(Math.pow(element.value / 127, 2)); // Convert MIDI value to strength
-            //         });
+                //         // Prepare time and value arrays from expression data
+                //         option.expression.forEach(element => {
+                //             xArray.push(element.time - note.start + songStartTime);
+                //             valueArray.push(Math.pow(element.value / 127, 2)); // Convert MIDI value to strength
+                //         });
 
-            //         // Create dynamic vibrato samples by interpolating expression values
-            //         vibratoSample = this.vibratoSamples.map((e, i) => {
-            //             let t = i / this.context.sampleRate * 100;
-            //             return e * vibrato[option.instrument] * InterpolationUtil.linearInterp(xArray, valueArray, t);
-            //         });
-            //     }
-            //     // If no expression data (static vibrato)
-            //     else {
-            //         // Use cached vibrato if available
-            //         if (this.vibratoCache[option.instrument]) {
-            //             vibratoSample = this.vibratoCache[option.instrument];
-            //         }
-            //         // Create new vibrato samples and cache them
-            //         else {
-            //             vibratoSample = this.vibratoSamples.map(e => e * vibrato[option.instrument]);
-            //             this.vibratoCache[option.instrument] = vibratoSample;
-            //         }
-            //     }
+                //         // Create dynamic vibrato samples by interpolating expression values
+                //         vibratoSample = this.vibratoSamples.map((e, i) => {
+                //             let t = i / this.context.sampleRate * 100;
+                //             return e * vibrato[option.instrument] * InterpolationUtil.linearInterp(xArray, valueArray, t);
+                //         });
+                //     }
+                //     // If no expression data (static vibrato)
+                //     else {
+                //         // Use cached vibrato if available
+                //         if (this.vibratoCache[option.instrument]) {
+                //             vibratoSample = this.vibratoCache[option.instrument];
+                //         }
+                //         // Create new vibrato samples and cache them
+                //         else {
+                //             vibratoSample = this.vibratoSamples.map(e => e * vibrato[option.instrument]);
+                //             this.vibratoCache[option.instrument] = vibratoSample;
+                //         }
+                //     }
 
-            //     // Apply the vibrato effect to the oscillator
-            //     oscillator.detune.setValueCurveAtTime(vibratoSample, note.start, 10);
-            // } catch (e) {
-            //     console.error(e); // Log any errors
-            // }
+                //     // Apply the vibrato effect to the oscillator
+                //     oscillator.detune.setValueCurveAtTime(vibratoSample, note.start, 10);
+                // } catch (e) {
+                //     console.error(e); // Log any errors
+                // }
 
-            gainNode.gain.setValueAtTime(0, note.start);
-            // Attack phase
-            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
+                gainNode.gain.setValueAtTime(0, note.start);
+                // Attack phase
+                gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
 
-            
-            // Decay phase
-            gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
 
-            // Sustain phase (no explicit scheduling needed)
+                // Decay phase
+                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
 
-            // Release phase
-            const releaseClamped = Math.min(release, 0.25);
-            gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
+                // Sustain phase (no explicit scheduling needed)
 
-            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
-        }
+                // Release phase
+                const releaseClamped = Math.min(release, 0.25);
+                gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
+
+                this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
+            }
             break;
-            
+
 
         case 3:
             let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));

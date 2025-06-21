@@ -430,7 +430,9 @@ export function getKSSampler(context, instId, octave = 2) {
     let inst = instruments[octave][instId];
 
     // Calculate the actual frequency of the sample
-    const karplusLength = Math.floor(context.sampleRate / 440); 
+
+    let baseFrequency = 440 * Math.pow(2, (octave - 2));
+    const karplusLength = Math.floor(context.sampleRate / baseFrequency);
     let frequency = 1 / (karplusLength / context.sampleRate);
     let buffer;
 
