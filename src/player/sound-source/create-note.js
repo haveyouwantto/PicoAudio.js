@@ -260,7 +260,7 @@ export default function createNote(option) {
             // Apply envelope to note
             let instEnvelope = inst.adsr;
             const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-            let velocity = gainNode.gain.value;
+            let velocity = gainNode.gain.value * 1.5;
             const attackClamped = Math.max(attack, 0.001);
 
             // // Setup vibrato effect

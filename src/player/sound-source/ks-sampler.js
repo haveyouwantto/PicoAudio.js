@@ -116,7 +116,7 @@ export function ksSampler(amplitudeArray, sampleRate, duration, useDecay, karplu
     }
 
     if (useDecay) {
-        let decay = 1;
+        let decay = 0.997;
         let idx = 0;
         for (let i = 0; i < sampleCount; i++) {
             audioBuffer[i] = karplusBuffer[idx];
