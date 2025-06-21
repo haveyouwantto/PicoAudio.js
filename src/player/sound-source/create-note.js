@@ -77,17 +77,6 @@ export default function createNote(option) {
             let samples = getKSSampler(this.context, option.instrument, findClosestNumberIndex(option.pitch));
             if (!samples) return null; // サンプルが取得できなかった場合はnullを返す
             oscillator.buffer = samples.buffer;
-
-            // get the base pitch and detune value
-
-            const octave = findClosestNumberIndex(option.pitch);
-            let baseNote = 45 + octave * 12;
-            oscillator.basePitch = (option.pitch - baseNote) * 100;
-
-            // calculate static detune value
-            let baseFrequency = this.settings.basePitch * Math.pow(2, (octave - 2));
-            oscillator.playbackRate.setValueAtTime(baseFrequency / samples.frequency, note.start);
-            oscillator.detune.value = oscillator.basePitch;
             oscillator.loop = false;
             if (this.settings.enableEqualizer) gainNode.gain.value *= getVolumeMul(option.pitch);
             break;
@@ -98,10 +87,7 @@ export default function createNote(option) {
             getSample(this.context, option.instrument, octave2).then(sample => {
                 oscillator.buffer = sample;
             });
-            let baseNote2 = 45 + octave2 * 12;
             oscillator.loopStart = 1;
-            oscillator.basePitch = (option.pitch - baseNote2) * 100;
-            oscillator.detune.value = oscillator.basePitch;
             break;
     }
 

@@ -433,7 +433,7 @@ export function getKSSampler(context, instId, octave = 2) {
 
     let baseFrequency = 440 * Math.pow(2, (octave - 2));
     const karplusLength = Math.floor(context.sampleRate / baseFrequency);
-    let frequency = 1 / (karplusLength / context.sampleRate);
+    let frequency = context.sampleRate / karplusLength; 
     let buffer;
 
     // Check if the waveform for the given instrument and octave is already cached
@@ -446,7 +446,7 @@ export function getKSSampler(context, instId, octave = 2) {
         let samples = ksSampler(inst.data, context.sampleRate, 4, decay, karplusLength);
 
 
-        buffer = context.createBuffer(4, samples.length, context.sampleRate);
+        buffer = context.createBuffer(1, samples.length, context.sampleRate);
         // Fill the buffer with the samples
         buffer.copyToChannel(samples, 0);
         // Create a Karplus-Strong sampler using the context
