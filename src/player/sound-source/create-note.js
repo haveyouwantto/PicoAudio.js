@@ -78,6 +78,11 @@ export default function createNote(option) {
             if (!samples) return null; // サンプルが取得できなかった場合はnullを返す
             oscillator.buffer = samples.buffer;
             oscillator.loop = false;
+
+            const octave = findClosestNumberIndex(option.pitch);
+            const targetFrequency = this.settings.basePitch * Math.pow(2, octave - 2);
+            const error = targetFrequency / samples.frequency;
+            oscillator.playbackRate.value *= error;
             if (this.settings.enableEqualizer) gainNode.gain.value *= getVolumeMul(option.pitch);
             break;
 
