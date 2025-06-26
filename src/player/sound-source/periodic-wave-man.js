@@ -384,6 +384,13 @@ function createWave(inst) {
         real.push(f * Math.cos(phase));
         imag.push(f * Math.sin(phase));
     });
+
+    // Check if length >= 2
+    if (real.length < 2) {
+        real.push(1);
+        imag.push(1);
+    }
+
     // Return the waveform as an array of Float32Arrays
     return [new Float32Array(real), new Float32Array(imag)];
 }
