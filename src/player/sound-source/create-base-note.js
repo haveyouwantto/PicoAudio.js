@@ -11,7 +11,7 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
     let isGainValueZero = true;
 
     // 無音の場合は処理終了 //
-    if (velocity <= 0) return {isGainValueZero: true};
+    if (velocity <= 0) return { isGainValueZero: true };
 
     // 音量の変化を設定 //
     const expGainValue = velocity * ((option.expression ? option.expression[0].value : 100) / 127);
@@ -32,17 +32,17 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
 
     // 無音の場合は処理終了 //
     if (isGainValueZero) { // 音量が常に0なら音を鳴らさない
-        return {isGainValueZero: true};
+        return { isGainValueZero: true };
     }
 
     // 全ての変数を準備 //
     const start = option.startTime + songStartTime + baseLatency;
     const stop = option.stopTime + songStartTime + baseLatency;
-    const pitch = settings.basePitch * Math.pow(Math.pow(2, 1/12), (option.pitch || 69) - 69);
+    const pitch = settings.basePitch * Math.pow(Math.pow(2, 1 / 12), (option.pitch || 69) - 69);
     const oscillator = !isBuffer ? context.createOscillator() : context.createBufferSource();
     const panNode = context.createStereoPanner ? context.createStereoPanner()
         : context.createPanner ? context.createPanner()
-        : { pan: { setValueAtTime: ()=>{} } };
+            : { pan: { setValueAtTime: () => { } } };
     const gainNode = context.createGain();
     const stopGainNode = context.createGain();
 
@@ -55,24 +55,24 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
         option.pitchBend ? option.pitchBend.forEach((p) => {
             const t = Math.max(0, p.time + songStartTime + baseLatency);
             oscillator.frequency.setValueAtTime(
-                settings.basePitch * Math.pow(Math.pow(2, 1/12), option.pitch - 69 + p.value),
+                settings.basePitch * Math.pow(Math.pow(2, 1 / 12), option.pitch - 69 + p.value),
                 t
             );
         }) : false;
-    } else if(this.settings.soundQuality == 3) {
+    } else {
         oscillator.loop = true;
         if (option.channel != 9) {
-        const octave = findClosestNumberIndex(option.pitch);
-        const baseNote = 45 + octave * 12;
-        const basePitch = (option.pitch - baseNote) * 100;
-           
-        option.pitchBend ? option.pitchBend.forEach((p) => {
-            const t = Math.max(0, p.time + songStartTime + baseLatency);
-            oscillator.detune.setValueAtTime(
-                basePitch + p.value * 100,
-                t
-            );
-        }) : false;
+            const octave = findClosestNumberIndex(option.pitch);
+            const baseNote = this.settings.soundQuality == 3 ? 45 + octave * 12 : option.pitch;
+            const basePitch = (option.pitch - baseNote) * 100;
+
+            option.pitchBend ? option.pitchBend.forEach((p) => {
+                const t = Math.max(0, p.time + songStartTime + baseLatency);
+                oscillator.detune.setValueAtTime(
+                    basePitch + p.value * 100,
+                    t
+                );
+            }) : false;
         }
         // oscillator.buffer = this.whitenoise;
     }
@@ -252,7 +252,7 @@ function initPanValue(context, panNode, panValue) {
     if (context.createStereoPanner) {
         if (panValue > 1.0) panValue = 1.0;
         panNode.pan.value = panValue;
-    } else if(context.createPanner) {
+    } else if (context.createPanner) {
         // iOS, Old Browser
         const posObj = convPosition(panValue);
         panNode.panningModel = "equalpower";
