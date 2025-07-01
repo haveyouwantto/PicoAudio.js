@@ -447,7 +447,7 @@ export function getKSSampler(context, instId, octave = 2) {
         // If not cached, create the Karplus-Strong sampler
         let decay = quickfadeArray[instId];
         let samples = ksSampler(inst.data, context.sampleRate, 4, decay);
-        frequency = context.sampleRate / ((inst.data.length + 1) * 8);
+        frequency = context.sampleRate / ((inst.data.length + 1) * 4);
 
 
         buffer = context.createBuffer(1, samples.length, context.sampleRate);

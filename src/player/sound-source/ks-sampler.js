@@ -36,61 +36,25 @@ function ifft(real, imag) {
     return [resultReal, resultImag];
 }
 
-function interp2x(array) {
-    const newLength = array.length * 2;
-    const newArray = new Float32Array(newLength);
-    for (let i = 0; i < array.length; i++) {
-        newArray[i * 2] = array[i];
-        if (i < array.length - 1) {
-            newArray[i * 2 + 1] = (array[i] + array[i + 1]) / 2;
-        } else {
-            newArray[i * 2 + 1] = array[i];
-        }
+function interpNx(array, factor) {
+    if (factor <= 1) {
+        console.warn("Interpolation factor should be greater than 1.");
+        return new Float32Array(array); 
     }
-    return newArray;
-}
 
-function interp4x(array) {
-    const newLength = array.length * 4;
+    const newLength = array.length * factor;
     const newArray = new Float32Array(newLength);
-    for (let i = 0; i < array.length; i++) {
-        newArray[i * 4] = array[i];
-        if (i < array.length - 1) {
-            const startVal = array[i];
-            const endVal = array[i + 1];
-            const segmentSize = (endVal - startVal) / 4;
+    const originalLength = array.length; 
 
-            newArray[i * 4 + 1] = startVal + segmentSize * 1; 
-            newArray[i * 4 + 2] = startVal + segmentSize * 2; 
-            newArray[i * 4 + 3] = startVal + segmentSize * 3; 
-        } else {
-            newArray[i * 4 + 1] = array[i];
-            newArray[i * 4 + 2] = array[i];
-            newArray[i * 4 + 3] = array[i];
-        }
-    }
-    return newArray;
-}
+    for (let i = 0; i < originalLength; i++) {
+        newArray[i * factor] = array[i]; 
 
-function interp8x(array) {
-    const newLength = array.length * 8;
-    const newArray = new Float32Array(newLength);
+        const startVal = array[i];
+        const endVal = array[(i + 1) % originalLength]; 
+        const delta = (endVal - startVal) / factor; 
 
-    for (let i = 0; i < array.length; i++) {
-        newArray[i * 8] = array[i]; 
-
-        if (i < array.length - 1) {
-            const startVal = array[i];
-            const endVal = array[i + 1];
-            const segmentSize = (endVal - startVal) / 8;
-
-            for (let j = 1; j < 8; j++) { 
-                newArray[i * 8 + j] = startVal + segmentSize * j;
-            }
-        } else {
-            for (let j = 1; j < 8; j++) {
-                newArray[i * 8 + j] = array[i];
-            }
+        for (let j = 1; j < factor; j++) { 
+            newArray[i * factor + j] = startVal + delta * j;
         }
     }
     return newArray;
@@ -111,7 +75,7 @@ export function ksSampler(amplitudeArray, sampleRate, duration, useDecay, karplu
     [re, im] = ifft(re, im);
 
     // Interpolate the real part
-    re = interp8x(re);
+    re = interpNx(re, 4);
 
     // Normalize the real part
     let maxAmplitude = Math.max(...re.map(Math.abs));
