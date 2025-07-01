@@ -79,8 +79,7 @@ export default function createNote(option) {
             oscillator.buffer = samples.buffer;
             oscillator.loop = false;
 
-            const octave = findClosestNumberIndex(option.pitch);
-            const targetFrequency = this.settings.basePitch * Math.pow(2, octave - 2);
+            const targetFrequency = this.settings.basePitch * Math.pow(2, (option.pitch - 69) / 12);
             const error = targetFrequency / samples.frequency;
             oscillator.playbackRate.value *= error;
             if (this.settings.enableEqualizer) gainNode.gain.value *= getVolumeMul(option.pitch);

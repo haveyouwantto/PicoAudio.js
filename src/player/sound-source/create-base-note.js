@@ -59,7 +59,7 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
                 t
             );
         }) : false;
-    } else {
+    } else if(this.settings.soundQuality == 3) {
         oscillator.loop = true;
         if (option.channel != 9) {
         const octave = findClosestNumberIndex(option.pitch);
