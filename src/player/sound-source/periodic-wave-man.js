@@ -436,7 +436,7 @@ export function getVolumeMul(note) {
 export function getKSSampler(context, instId, octave = 2) {
     let inst = instruments[octave][instId];
 
-    let buffer, frequency = 440;
+    let buffer, frequency;
 
     // Check if the waveform for the given instrument and octave is already cached
     if (inst.ksSampler) {
@@ -446,9 +446,14 @@ export function getKSSampler(context, instId, octave = 2) {
     } else {
         // If not cached, create the Karplus-Strong sampler
         let decay = quickfadeArray[instId];
-        let samples = ksSampler(inst.data, context.sampleRate, 4, decay);
-        frequency = context.sampleRate / ((inst.data.length + 1) * 4);
 
+        let centerNote = 45 + octave * 12;
+        let targetFrequency = 440 * Math.pow(2, (centerNote - 69) / 12);
+        let lengthMul = Math.max(1, Math.round(context.sampleRate / targetFrequency / inst.data.length));
+
+        // Generate samples using the Karplus-Strong sampler
+        let samples = ksSampler(inst.data, context.sampleRate, 4, decay, lengthMul);
+        frequency = context.sampleRate / ((inst.data.length + 1) * lengthMul);
 
         buffer = context.createBuffer(1, samples.length, context.sampleRate);
         // Fill the buffer with the samples

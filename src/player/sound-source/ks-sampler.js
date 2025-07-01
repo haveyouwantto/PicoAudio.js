@@ -61,7 +61,7 @@ function interpNx(array, factor) {
 }
 
 // Karplus-Strong sampler function
-export function ksSampler(amplitudeArray, sampleRate, duration, useDecay, karplusLength = 100) {
+export function ksSampler(amplitudeArray, sampleRate, duration, useDecay, lengthMul = 4) {
     let re = [0];
     let im = [0];
 
@@ -75,7 +75,7 @@ export function ksSampler(amplitudeArray, sampleRate, duration, useDecay, karplu
     [re, im] = ifft(re, im);
 
     // Interpolate the real part
-    re = interpNx(re, 4);
+    re = interpNx(re, lengthMul);
 
     // Normalize the real part
     let maxAmplitude = Math.max(...re.map(Math.abs));
