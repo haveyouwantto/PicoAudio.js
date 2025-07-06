@@ -67,9 +67,8 @@ export function ksSampler(amplitudeArray, sampleRate, duration, useDecay, length
 
     for (let i = 0; i < amplitudeArray.length; i++) { // 0番目はDC成分として使用しない
         let amp = amplitudeArray[i];
-        let phase = Math.random() * 2 * Math.PI; // ランダムな位相
-        re.push(amp * Math.cos(phase));
-        im.push(amp * Math.sin(phase));
+        re.push(0);
+        im.push(amp);
     }
 
     [re, im] = ifft(re, im);

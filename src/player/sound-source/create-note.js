@@ -251,7 +251,6 @@ export default function createNote(option) {
                 let instEnvelope = inst.adsr;
                 const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
                 let velocity = gainNode.gain.value * quickfadeArray[option.instrument] ? 2 : 1.5;
-                const attackClamped = Math.max(attack, 0.001);
 
                 // // Setup vibrato effect
                 // try {
@@ -296,11 +295,11 @@ export default function createNote(option) {
 
                 gainNode.gain.setValueAtTime(0, note.start);
                 // Attack phase
-                gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
+                gainNode.gain.setTargetAtTime(velocity, note.start, attack / 3);
 
 
                 // Decay phase
-                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
+                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attack, decay / 2);
 
                 // Sustain phase (no explicit scheduling needed)
 
