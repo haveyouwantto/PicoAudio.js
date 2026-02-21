@@ -179,8 +179,8 @@ export default function createNote(option) {
 
                 // If expression data exists (for dynamic vibrato)
                 if (option.expression) {
-                    let xArray = []; // Time points
-                    let valueArray = []; // Vibrato strength values
+                    const xArray = []; // Time points
+                    const valueArray = []; // Vibrato strength values
 
                     // Prepare time and value arrays from expression data
                     option.expression.forEach(element => {
@@ -188,11 +188,35 @@ export default function createNote(option) {
                         valueArray.push(Math.pow(element.value / 127, 2)); // Convert MIDI value to strength
                     });
 
-                    // Create dynamic vibrato samples by interpolating expression values
-                    vibratoSample = this.vibratoSamples.map((e, i) => {
-                        let t = i / this.context.sampleRate * 100;
-                        return e * vibrato[option.instrument] * InterpolationUtil.linearInterp(xArray, valueArray, t);
-                    });
+                    const vSamples = this.vibratoSamples;
+                    const vLen = vSamples.length;
+                    const sampleRate = this.context.sampleRate;
+                    const instrumentVibrato = vibrato[option.instrument];
+                    vibratoSample = new Float32Array(vLen);
+
+                    let idx = 0;
+                    const xLen = xArray.length;
+
+                    for (let i = 0; i < vLen; i++) {
+                        const t = (i / sampleRate) * 100;
+
+                        // Find the right interval for linear interpolation
+                        while (idx < xLen - 1 && xArray[idx + 1] <= t) {
+                            idx++;
+                        }
+
+                        let strength;
+                        if (idx >= xLen - 1) {
+                            strength = valueArray[xLen - 1];
+                        } else if (t < xArray[idx]) {
+                            strength = valueArray[0];
+                        } else {
+                            const t0 = (t - xArray[idx]) / (xArray[idx + 1] - xArray[idx]);
+                            strength = valueArray[idx] + (valueArray[idx + 1] - valueArray[idx]) * t0;
+                        }
+
+                        vibratoSample[i] = vSamples[i] * instrumentVibrato * strength;
+                    }
                 }
                 // If no expression data (static vibrato)
                 else {
@@ -202,7 +226,13 @@ export default function createNote(option) {
                     }
                     // Create new vibrato samples and cache them
                     else {
-                        vibratoSample = this.vibratoSamples.map(e => e * vibrato[option.instrument]);
+                        const vSamples = this.vibratoSamples;
+                        const vLen = vSamples.length;
+                        const instrumentVibrato = vibrato[option.instrument];
+                        vibratoSample = new Float32Array(vLen);
+                        for (let i = 0; i < vLen; i++) {
+                            vibratoSample[i] = vSamples[i] * instrumentVibrato;
+                        }
                         this.vibratoCache[option.instrument] = vibratoSample;
                     }
                 }
