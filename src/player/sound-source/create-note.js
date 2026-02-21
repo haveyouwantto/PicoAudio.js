@@ -10,6 +10,7 @@ export default function createNote(option) {
     const oscillator = note.oscillator;
     const gainNode = note.gainNode;
     const stopGainNode = note.stopGainNode;
+    const filter = note.filter;
     let isPizzicato = false;
     let isNoiseCut = false;
 
@@ -70,7 +71,6 @@ export default function createNote(option) {
         case 1:
             let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
             oscillator.setPeriodicWave(inst.wave);
-            if (this.settings.enableEqualizer) gainNode.gain.value *= getVolumeMul(option.pitch);
             break;
 
         case 3:
@@ -215,12 +215,19 @@ export default function createNote(option) {
 
             gainNode.gain.setValueAtTime(0, note.start);
             // Attack phase
+            if (isPluck) {
+                velocity *= getVolumeMul(option.pitch)
+            }
             gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
 
             // Decay phase
+
             if (isPluck) {
-                const decayTime = decay * Math.pow(2, (69 - option.pitch) / 24);
+                const decayTime = Math.max(decay * Math.pow(2, (69 - option.pitch) / 12), 0.5);
+                const cutoffFreq = 492.35 * Math.exp(2.5 * option.velocity)// Determine by note velocity
                 gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
+                filter.frequency.setValueAtTime(cutoffFreq * 1.5, note.start + attackClamped);
+                filter.frequency.setTargetAtTime(cutoffFreq * 0.2, note.start + attackClamped, decayTime / 3);
             } else {
                 gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
             }
