@@ -257,7 +257,7 @@ export default function createNote(option) {
                 const cutoffFreq = 492.35 * Math.exp(2.5 * option.velocity)// Determine by note velocity
                 gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
                 filter.frequency.setValueAtTime(cutoffFreq * 1.5, note.start + attackClamped);
-                filter.frequency.setTargetAtTime(cutoffFreq * 0.2, note.start + attackClamped, decayTime / 3);
+                filter.frequency.setTargetAtTime(cutoffFreq * 0.1, note.start + attackClamped, decay / 3);
             } else {
                 gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
             }
