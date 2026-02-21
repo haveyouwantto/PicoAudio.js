@@ -253,11 +253,30 @@ export default function createNote(option) {
             // Decay phase
 
             if (isPluck) {
-                const decayTime = Math.max(decay * Math.pow(2, (69 - option.pitch) / 12), 0.5);
-                const cutoffFreq = 492.35 * Math.exp(2.5 * option.velocity)// Determine by note velocity
+                // 调整延迟算法：之前的算法以69(A4)为底做幂运算，导致低频(如36)衰减极度缓慢(太粘)，高频(84)衰减极度迅速(太短)。
+                // 将缩放系数缓和 (从12变为24)，并以音符 60(C4) 的听感为锚点(1.7)保持原有中频段的听觉体验。
+                const decayTime = Math.max(decay * 1.7 * Math.pow(2, (60 - option.pitch) / 24), 0.5);
+
+                // 获取当前音符的基频和基础明亮度
+                const pitchFreq = 440 * Math.pow(2, (option.pitch - 69) / 12);
+                const cutoffFreq = 492.35 * Math.exp(2.5 * option.velocity);
+
+                const nyquist = this.context.sampleRate / 2;
+
+                // 初始阶段：必须足够高，包含完整的拨弦瞬态泛音
+                const filterStart = Math.min(Math.max(pitchFreq * 4, cutoffFreq * 1.5), nyquist);
+
+                // 目标阶段：滤波器闭合的目标，不能过高（过高会导致失去滤波效果，像没加 filter），
+                // 同时不能低于基频的 1.2 倍（防止高音被“吃”掉发闷）。
+                const filterTarget = Math.min(Math.max(pitchFreq * 1.2, cutoffFreq * 0.05), nyquist);
+
+                // 滤波器收敛速度：必须保持较快，产生“迅速消退的明亮感”。
+                // 不能用 decayTime，否则低音衰减太慢，导致听感如同没加filter。
+                const filterDecay = decay / 3;
+
                 gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
-                filter.frequency.setValueAtTime(cutoffFreq * 1.5, note.start + attackClamped);
-                filter.frequency.setTargetAtTime(cutoffFreq * 0.1, note.start + attackClamped, decay / 3);
+                filter.frequency.setValueAtTime(filterStart, note.start + attackClamped);
+                filter.frequency.setTargetAtTime(filterTarget, note.start + attackClamped, filterDecay);
             } else {
                 gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
             }
