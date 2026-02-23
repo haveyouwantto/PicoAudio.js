@@ -261,15 +261,20 @@ export default function createNote(option) {
 
                 const nyquist = this.context.sampleRate / 2;
 
+                // 低频亮度补偿：低音弦在拨动时通常产生比例更高的瞬态分量。
+                // 以 60 (C4) 为基点，每低 3 个八度补偿约 2 倍的倍率，让低音更“脆”。
+                const pitchComp = Math.pow(2, (60 - option.pitch) / 36);
+
                 // 初始阶段：必须足够高，包含完整的拨弦瞬态泛音
-                const filterStart = Math.min(Math.max(pitchFreq * 4, cutoffFreq * 1.5), nyquist);
+                // 应用亮度补偿 pitchComp
+                const filterStart = Math.min(Math.max(pitchFreq * 4 * pitchComp, cutoffFreq * 1.5), nyquist);
 
                 // 目标阶段：滤波器闭合的目标，不能过高（过高会导致失去滤波效果，像没加 filter），
                 // 同时不能低于基频的 1.2 倍（防止高音被“吃”掉发闷）。
                 const filterTarget = Math.min(Math.max(pitchFreq * 1.2, cutoffFreq * 0.05), nyquist);
 
                 // 滤波器收敛速度：必须保持较快，产生“迅速消退的明亮感”。
-                // 不能用 decayTime，否则低音衰减太慢，导致听感如同没加filter。
+                // 不能用 decay，否则低音衰减太慢，导致听感如同没加filter。
                 const filterDecay = decayTime / 6;
 
                 gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);

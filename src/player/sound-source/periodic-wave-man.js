@@ -378,8 +378,25 @@ function createWave(inst) {
     // DC offset, should always be 0
     let real = [0];
     let imag = [0];
+    // 为低频音色进行 SBR (Spectral Band Replication) 增强
+    // 如果谐波数量较少 (如 64 个)，低频率下高频分量不足导致声音沉闷。
+    // 我们复制现有的谐波系数并以三角形衰减的方式贴在后面，手动增加倍频程。
+    let extendedData = Array.from(inst.data);
+    const originalLen = extendedData.length;
+
+    // 复制一层：计算缩放系数以确保频谱连续性
+    // 复制段的第一项能量不能超过原始段的最后一项
+    const lastRatio = originalLen > 0 ? extendedData[originalLen - 1] : 0;
+    const firstRatio = originalLen > 0 ? extendedData[0] : 1;
+    const sbrScale = firstRatio > 0 ? Math.min(1.0, lastRatio / firstRatio) : 0;
+
+    for (let i = 0; i < originalLen; i++) {
+        // 基于 sbrScale 比例进行复制，并应用三角形递减 (1 -> 0)
+        extendedData.push(inst.data[i] * sbrScale * (1 - i / originalLen));
+    }
+
     // Generate the real and imaginary parts of the waveform
-    inst.data.forEach(f => {
+    extendedData.forEach(f => {
         let phase = getRandomPhase();
         real.push(f * Math.cos(phase));
         imag.push(f * Math.sin(phase));
