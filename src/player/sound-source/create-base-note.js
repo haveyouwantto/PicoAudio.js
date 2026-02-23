@@ -39,107 +39,116 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
     const start = option.startTime + songStartTime + baseLatency;
     const stop = option.stopTime + songStartTime + baseLatency;
     const pitch = settings.basePitch * Math.pow(Math.pow(2, 1 / 12), (option.pitch || 69) - 69);
-    const oscillator = !isBuffer ? context.createOscillator() : context.createBufferSource();
-    const panNode = context.createStereoPanner ? context.createStereoPanner()
-        : context.createPanner ? context.createPanner()
-            : { pan: { setValueAtTime: () => { } } };
+
+    // Determine number of oscillators for "thickness" (Unison)
+    // Only apply to melodic non-buffer notes in higher quality modes
+    const useUnison = !isBuffer && !nonChannel && settings.soundQuality > 0;
+    const numOsc = useUnison ? 2 : 1;
+    const oscillators = [];
+    const panNodes = [];
+
+    for (let i = 0; i < numOsc; i++) {
+        const osc = !isBuffer ? context.createOscillator() : context.createBufferSource();
+        oscillators.push(osc);
+
+        const pan = context.createStereoPanner ? context.createStereoPanner()
+            : context.createPanner ? context.createPanner()
+                : { pan: { setValueAtTime: () => { } } };
+        panNodes.push(pan);
+    }
+
+    const oscillator = oscillators[0];
+    const panNode = panNodes[0];
     const gainNode = context.createGain();
     const stopGainNode = context.createGain();
 
     // ドラムはホワイトノイズ、ドラム以外はoscillatorを設定 //
     // oscillatorはピッチ変動も設定 //
-    if (!isBuffer) {
-        oscillator.type = option.type || "sine";
-        oscillator.detune.value = 0;
-        oscillator.frequency.value = pitch;
-        option.pitchBend ? option.pitchBend.forEach((p) => {
-            const t = Math.max(0, p.time + songStartTime + baseLatency);
-            oscillator.frequency.setValueAtTime(
-                settings.basePitch * Math.pow(Math.pow(2, 1 / 12), option.pitch - 69 + p.value),
-                t
-            );
-        }) : false;
-    } else {
-        oscillator.loop = true;
-        if (option.channel != 9) {
-            const octave = findClosestNumberIndex(option.pitch);
-            const baseNote = 45 + octave * 12;
-            const basePitch = (option.pitch - baseNote) * 100;
+    oscillators.forEach((osc, i) => {
+        const detuneOffset = useUnison ? (i === 0 ? 5 : -5) : 0; // Detune oscillators slightly for thickness
 
+        if (!isBuffer) {
+            osc.type = option.type || "sine";
+            osc.detune.value = detuneOffset;
+            osc.frequency.value = pitch;
             option.pitchBend ? option.pitchBend.forEach((p) => {
                 const t = Math.max(0, p.time + songStartTime + baseLatency);
-                oscillator.detune.setValueAtTime(
-                    basePitch + p.value * 100,
+                osc.frequency.setValueAtTime(
+                    settings.basePitch * Math.pow(Math.pow(2, 1 / 12), option.pitch - 69 + p.value),
                     t
                 );
             }) : false;
+        } else {
+            osc.loop = true;
+            if (option.channel != 9) {
+                const octave = findClosestNumberIndex(option.pitch);
+                const baseNote = 45 + octave * 12;
+                const basePitch = (option.pitch - baseNote) * 100;
+
+                option.pitchBend ? option.pitchBend.forEach((p) => {
+                    const t = Math.max(0, p.time + songStartTime + baseLatency);
+                    osc.detune.setValueAtTime(
+                        basePitch + p.value * 100 + detuneOffset,
+                        t
+                    );
+                }) : false;
+            }
         }
-        // oscillator.buffer = this.whitenoise;
-    }
+    });
 
     // パンの初期値を設定 //
-    const panValue = option.pan && option.pan[0].value != 64 ? (option.pan[0].value / 127) * 2 - 1 : 0;
-    initPanValue(context, panNode, panValue);
+    const basePan = option.pan && option.pan[0].value != 64 ? (option.pan[0].value / 127) * 2 - 1 : 0;
+    panNodes.forEach((pNode, i) => {
+        const spreadMultiplier = 0.2;
+        const spreadOffset = useUnison ? (i === 0 ? -spreadMultiplier : spreadMultiplier) : 0;
+        const pValue = Math.max(-1, Math.min(1, basePan + spreadOffset));
+        initPanValue(context, pNode, pValue);
+    });
 
     // パンの変動を設定 //
     if (context.createStereoPanner || context.createPanner) {
-        // StereoPannerNode or PannerNode がどちらかでも使える
-        let firstNode = true;
-        if (context.createStereoPanner) {
-            // StereoPannerNode が使える
+        panNodes.forEach((pNode, i) => {
+            const spreadMultiplier = 0.2;
+            const spreadOffset = useUnison ? (i === 0 ? -spreadMultiplier : spreadMultiplier) : 0;
+            let firstNode = true;
+
             option.pan ? option.pan.forEach((p) => {
                 if (firstNode) {
                     firstNode = false;
                     return;
                 }
-                const v = Math.min(1.0, p.value == 64 ? 0 : (p.value / 127) * 2 - 1);
+                const v = Math.max(-1, Math.min(1, (p.value == 64 ? 0 : (p.value / 127) * 2 - 1) + spreadOffset));
                 const t = Math.max(0, p.time + songStartTime + baseLatency);
-                panNode.pan.setValueAtTime(v, t);
-            }) : false;
-        } else if (context.createPanner) {
-            // StereoPannerNode が未サポート、PannerNode が使える
-            if (panNode.positionX) {
-                // setValueAtTimeが使える
-                // Old Browser
-                let firstPan = true;
-                option.pan ? option.pan.forEach((p) => {
-                    if (firstPan) {
-                        firstPan = false;
-                        return;
-                    }
-                    const v = p.value == 64 ? 0 : (p.value / 127) * 2 - 1;
-                    const posObj = convPosition(v);
-                    const t = Math.max(0, p.time + songStartTime + baseLatency);
-                    panNode.positionX.setValueAtTime(posObj.x, t);
-                    panNode.positionY.setValueAtTime(posObj.y, t);
-                    panNode.positionZ.setValueAtTime(posObj.z, t);
-                }) : false;
-            } else {
-                // iOS
-                // setValueAtTimeが使えないためsetTimeoutでパンの動的変更
-                option.pan ? option.pan.forEach((p) => {
-                    if (firstNode) {
-                        firstNode = false;
-                        return;
-                    }
-                    const reservePan = setTimeout(() => {
-                        this.clearFunc("pan", reservePan);
-                        const v = Math.min(1.0, p.value == 64 ? 0 : (p.value / 127) * 2 - 1);
+
+                if (context.createStereoPanner) {
+                    pNode.pan.setValueAtTime(v, t);
+                } else if (context.createPanner) {
+                    if (pNode.positionX) {
                         const posObj = convPosition(v);
-                        panNode.setPosition(posObj.x, posObj.y, posObj.z);
-                    }, (p.time + songStartTime + baseLatency - context.currentTime) * 1000);
-                    this.pushFunc({
-                        pan: reservePan,
-                        stopFunc: () => { clearTimeout(reservePan); }
-                    });
-                }) : false;
-            }
-        }
-        oscillator.connect(panNode);
-        panNode.connect(expGainNode);
+                        pNode.positionX.setValueAtTime(posObj.x, t);
+                        pNode.positionY.setValueAtTime(posObj.y, t);
+                        pNode.positionZ.setValueAtTime(posObj.z, t);
+                    } else {
+                        const reservePan = setTimeout(() => {
+                            this.clearFunc("pan", reservePan);
+                            const posObj = convPosition(v);
+                            pNode.setPosition(posObj.x, posObj.y, posObj.z);
+                        }, (p.time + songStartTime + baseLatency - context.currentTime) * 1000);
+                        this.pushFunc({
+                            pan: reservePan,
+                            stopFunc: () => { clearTimeout(reservePan); }
+                        });
+                    }
+                }
+            }) : false;
+        });
+
+        oscillators.forEach((osc, i) => {
+            osc.connect(panNodes[i]);
+            panNodes[i].connect(expGainNode);
+        });
     } else {
-        // StereoPannerNode、PannerNode が未サポート
-        oscillator.connect(expGainNode);
+        oscillators.forEach(osc => osc.connect(expGainNode));
     }
 
 
@@ -246,7 +255,9 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
         channel: channel,
         velocity: velocity,
         oscillator: oscillator,
+        oscillators: oscillators,
         panNode: panNode,
+        panNodes: panNodes,
         gainNode: gainNode,
         stopGainNode: stopGainNode,
         filter: biquadFilter,
