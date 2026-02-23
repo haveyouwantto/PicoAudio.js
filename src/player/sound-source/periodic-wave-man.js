@@ -406,26 +406,21 @@ function createWave(inst) {
 }
 
 // Get the waveform for a specific instrument and octave (default octave is 2)
-export function getWave(context, instId, octave = 2, index = 0) {
+export function getWave(context, instId, octave = 2) {
     let inst = instruments[octave][instId];
-    if (!inst.waves) inst.waves = [];
-
-    // Check if the waveform variation for the given instrument and octave is already cached
-    if (inst.waves[index]) {
-        // Return the instrument with the specific wave variation
-        return { ...inst, wave: inst.waves[index] };
+    // Check if the waveform for the given instrument and octave is already cached
+    if (inst.wave) {
+        // If cached, return the cached waveform
+        return inst;
     } else {
         // If not cached, create the waveform
         let samples = createWave(inst);
         // Create custom waveform using the context
         var customWaveform = context.createPeriodicWave(samples[0], samples[1]);
-        // Cache the custom waveform variation
-        inst.waves[index] = customWaveform;
-        // For compatibility with single wave access
-        if (index === 0) inst.wave = customWaveform;
-
-        // Return the instrument with the specific wave variation
-        return { ...inst, wave: customWaveform };
+        // Cache the custom waveform for future use
+        inst.wave = customWaveform;
+        // Return the custom waveform
+        return inst;
     }
 }
 

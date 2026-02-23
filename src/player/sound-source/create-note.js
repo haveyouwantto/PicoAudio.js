@@ -7,7 +7,7 @@ export default function createNote(option) {
     const note = this.createBaseNote(option, isBuffer, true, false, true); // oscillatorのstopはこちらで実行するよう指定
     if (note.isGainValueZero) return null;
 
-    const oscillators = note.oscillators;
+    const oscillator = note.oscillator;
     const gainNode = note.gainNode;
     const stopGainNode = note.stopGainNode;
     const filter = note.filter;
@@ -29,7 +29,7 @@ export default function createNote(option) {
                 case 6: case 15: case 24: case 26: case 46: case 50: case 51:
                 case 52: case 53: case 54: case 82: case 85: case 86:
                     {
-                        oscillators.forEach(osc => osc.type = "sine");
+                        oscillator.type = "sine";
                         gainNode.gain.value *= 1.5;
                         break;
                     }
@@ -39,7 +39,7 @@ export default function createNote(option) {
                 case 55: case 56: case 57: case 61: case 62: case 63: case 71: case 72: case 73: case 74: case 75:
                 case 76: case 77: case 78: case 79: case 80: case 84:
                     {
-                        oscillators.forEach(osc => osc.type = "square");
+                        oscillator.type = "square";
                         gainNode.gain.value *= 0.8;
                         break;
                     }
@@ -49,7 +49,7 @@ export default function createNote(option) {
                 case 28: case 29: case 30: case 36: case 37: case 38: case 39: case 40: case 41: case 42: case 43:
                 case 44: case 47: case 59: case 64: case 65: case 66: case 67: case 68: case 69: case 70: case 87:
                     {
-                        oscillators.forEach(osc => osc.type = "sawtooth");
+                        oscillator.type = "sawtooth";
                         break;
                     }
                 // Triangle
@@ -57,41 +57,37 @@ export default function createNote(option) {
                 case 8: case 9: case 10: case 11: case 14: case 25: case 31: case 33: case 35: case 58: case 60:
                 case 83: case 88: case 89: case 90: case 91: case 92: case 93: case 94: case 95:
                     {
-                        oscillators.forEach(osc => osc.type = "triangle");
+                        oscillator.type = "triangle";
                         gainNode.gain.value *= 1.5;
                         break;
                     }
                 // Other - Square
                 default: {
-                    oscillators.forEach(osc => osc.type = "square");
+                    oscillator.type = "square";
                 }
             }
             break;
 
         case 1:
-            oscillators.forEach((osc, i) => {
-                let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch), i);
-                osc.setPeriodicWave(inst.wave);
-            });
+            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+            oscillator.setPeriodicWave(inst.wave);
             break;
 
         case 3:
-            oscillators.forEach(oscillator => {
-                oscillator.loop = !quickfadeArray[option.instrument];
-                const octave = findClosestNumberIndex(option.pitch);
-                getSample(this.context, option.instrument, octave).then(sample => {
-                    oscillator.buffer = sample;
-                });
-                const baseNote = 45 + octave * 12;
-                oscillator.loopStart = 1;
-                oscillator.basePitch = (option.pitch - baseNote) * 100;
-                oscillator.detune.value = oscillator.basePitch;
+            oscillator.loop = !quickfadeArray[option.instrument];
+            const octave = findClosestNumberIndex(option.pitch);
+            getSample(this.context, option.instrument, octave).then(sample => {
+                oscillator.buffer = sample;
             });
+            const baseNote = 45 + octave * 12;
+            oscillator.loopStart = 1;
+            oscillator.basePitch = (option.pitch - baseNote) * 100;
+            oscillator.detune.value = oscillator.basePitch;
             break;
     }
 
     // 音の終わりのプチプチノイズが気になるので、音の終わりに5ms減衰してノイズ軽減 //
-    if (oscillators[0] && (oscillators[0].type == "sine" || oscillators[0].type == "triangle")
+    if ((oscillator.type == "sine" || oscillator.type == "triangle")
         && !isPizzicato && note.stop - note.start > 0.01) {
         isNoiseCut = true;
     }
@@ -108,7 +104,7 @@ export default function createNote(option) {
                         gainNode.gain.value *= 1.1;
                         gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
                         gainNode.gain.linearRampToValueAtTime(0.0, note.start + 0.2);
-                        oscillators.forEach(oscillator => this.stopAudioNode(oscillator, note.start + 0.2, stopGainNode));
+                        this.stopAudioNode(oscillator, note.start + 0.2, stopGainNode);
                         break;
                     }
                 // ピアノ程度に伸ばす系
@@ -122,7 +118,7 @@ export default function createNote(option) {
                         gainNode.gain.linearRampToValueAtTime(gainNode.gain.value * 0.85, note.start + decay * decay / 8);
                         gainNode.gain.linearRampToValueAtTime(gainNode.gain.value * 0.8, note.start + decay * decay / 4);
                         gainNode.gain.setTargetAtTime(0, note.start + decay * decay / 4, 5 * decay * decay);
-                        oscillators.forEach(oscillator => this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut));
+                        this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
                         break;
                     }
                 // ギター系
@@ -132,7 +128,7 @@ export default function createNote(option) {
                         gainNode.gain.value *= 1.1;
                         gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
                         gainNode.gain.linearRampToValueAtTime(0.0, note.start + 1.0 + note.velocity * 4);
-                        oscillators.forEach(oscillator => this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut));
+                        this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
                         break;
                     }
                 // 減衰していくけど終わらない系
@@ -144,13 +140,13 @@ export default function createNote(option) {
                         gainNode.gain.linearRampToValueAtTime(gainNode.gain.value * 0.95, note.start + 0.1);
                         gainNode.gain.setValueAtTime(gainNode.gain.value * 0.95, note.start + 0.1);
                         gainNode.gain.linearRampToValueAtTime(0.0, note.start + 2.0 + note.velocity * 10);
-                        oscillators.forEach(oscillator => this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut));
+                        this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
                         break;
                     }
                 case 119: // Reverse Cymbal
                     {
                         gainNode.gain.value = 0;
-                        oscillators.forEach(oscillator => this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut));
+                        this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
                         note2 = this.createBaseNote(option, true, true);
                         if (note2.isGainValueZero) break;
                         note2.oscillator.playbackRate.setValueAtTime((option.pitch + 1) / 128, note.start);
@@ -162,12 +158,13 @@ export default function createNote(option) {
                 default: {
                     gainNode.gain.value *= 1.1;
                     gainNode.gain.setValueAtTime(gainNode.gain.value, note.start);
-                    oscillators.forEach(oscillator => this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut));
+                    this.stopAudioNode(oscillator, note.stop, stopGainNode, isNoiseCut);
                 }
             }
             break;
+        case -1:
         case 1: {
-            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch)); // Default wave for envelope data
+            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
             // Apply envelope to note
             let instEnvelope = inst.adsr;
             const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
@@ -241,9 +238,7 @@ export default function createNote(option) {
                 }
 
                 // Apply the vibrato effect to the oscillator
-                oscillators.forEach(oscillator => {
-                    oscillator.detune.setValueCurveAtTime(vibratoSample, note.start, 10);
-                });
+                oscillator.detune.setValueCurveAtTime(vibratoSample, note.start, 10);
             } catch (e) {
                 console.error(e); // Log any errors
             }
@@ -316,35 +311,29 @@ export default function createNote(option) {
             const releaseClamped = Math.min(release, 0.25);
             gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
 
-            oscillators.forEach(oscillator => {
-                this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
-            });
+            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
         }
             break;
 
         case 3:
-            oscillators.forEach((oscillator, i) => {
-                let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch), i);
-                // Apply envelope to note
-                let instEnvelope = inst.adsr;
-                const release = instEnvelope[3];
-                let velocity = gainNode.gain.value * 1.5;
+            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+            // Apply envelope to note
+            let instEnvelope = inst.adsr;
+            const release = instEnvelope[3];
+            let velocity = gainNode.gain.value * 1.5;
 
-                gainNode.gain.setValueAtTime(velocity, note.start);
+            gainNode.gain.setValueAtTime(velocity, note.start);
 
-                // Release phase
-                const releaseClamped = Math.min(release, 0.25);
-                gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
+            // Release phase
+            const releaseClamped = Math.min(release, 0.25);
+            gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
 
-                this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
-            });
+            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
     }
 
     // 音をストップさせる関数を返す //
     return () => {
-        oscillators.forEach(oscillator => {
-            this.stopAudioNode(oscillator, 0, stopGainNode, true);
-        });
+        this.stopAudioNode(oscillator, 0, stopGainNode, true);
         if (note2 && note2.oscillator) this.stopAudioNode(note2.oscillator, 0, note2.stopGainNode, true);
     };
 }
