@@ -253,12 +253,10 @@ export default function createNote(option) {
             // Decay phase
 
             if (isPluck) {
-                // 调整延迟算法：之前的算法以69(A4)为底做幂运算，导致低频(如36)衰减极度缓慢(太粘)，高频(84)衰减极度迅速(太短)。
-                // 将缩放系数缓和 (从12变为24)，并以音符 60(C4) 的听感为锚点(1.7)保持原有中频段的听觉体验。
-                const decayTime = Math.max(decay * 1.7 * Math.pow(2, (60 - option.pitch) / 24), 0.5);
+                const decayTime = Math.max(decay * 1.7 * Math.pow(2, (60 - option.pitch) / 18), 0.5);
 
                 // 获取当前音符的基频和基础明亮度
-                const pitchFreq = 440 * Math.pow(2, (option.pitch - 69) / 12);
+                const pitchFreq = oscillator.frequency.value;
                 const cutoffFreq = 492.35 * Math.exp(2.5 * option.velocity);
 
                 const nyquist = this.context.sampleRate / 2;
@@ -272,7 +270,7 @@ export default function createNote(option) {
 
                 // 滤波器收敛速度：必须保持较快，产生“迅速消退的明亮感”。
                 // 不能用 decayTime，否则低音衰减太慢，导致听感如同没加filter。
-                const filterDecay = decay / 3;
+                const filterDecay = decayTime / 6;
 
                 gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
                 filter.frequency.setValueAtTime(filterStart, note.start + attackClamped);
