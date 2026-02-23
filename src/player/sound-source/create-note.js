@@ -277,6 +277,27 @@ export default function createNote(option) {
                 filter.frequency.setTargetAtTime(filterTarget, note.start + attackClamped, filterDecay);
             } else {
                 gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
+
+                if (option.expression) {
+                    const songStartTime = this.states.startTime;
+                    const baseLatency = this.baseLatency;
+                    const pitchFreq = oscillator.frequency.value || 440;
+                    const nyquist = this.context.sampleRate / 2;
+
+                    // 将 Expression (CC11) 映射到滤波器截断频率
+                    // 随着声音变大，滤波器开口也随之变大，使音色变亮
+                    option.expression.forEach((p) => {
+                        const t = Math.max(0, p.time + songStartTime + baseLatency);
+                        const expScale = p.value / 127;
+
+                        const baseCutoff = pitchFreq * 4;
+                        const maxCutoff = Math.min(nyquist, 16000);
+                        const targetFreq = baseCutoff + (maxCutoff - baseCutoff) * Math.pow(expScale, 4);
+
+                        // 使用 setTargetAtTime 确保 expression point 之间有平滑过渡
+                        filter.frequency.linearRampToValueAtTime(targetFreq, t);
+                    });
+                }
             }
 
             // Sustain phase (no explicit scheduling needed)
