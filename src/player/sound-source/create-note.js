@@ -5,7 +5,7 @@ import { getSample } from "./soundbank";
 export default function createNote(option) {
     const isBuffer = this.settings.soundQuality == 1 || this.settings.soundQuality == 3;
     const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1;
-    const note = this.createBaseNote(option, isBuffer, true, false, true, true); // oscillatorのstopはこちらで実行するよう指定
+    const note = this.createBaseNote(option, isBuffer, true, false, true, needsFilter); // oscillatorのstopはこちらで実行するよう指定
     if (note.isGainValueZero) return null;
 
     const oscillator = note.oscillator;

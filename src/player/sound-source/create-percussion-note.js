@@ -1,16 +1,18 @@
 import { getDrumSample } from "./soundbank";
 
 export default function createPercussionNote(option) {
-    const note = this.createBaseNote(option, true, false);
+    const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1;
+    const note = this.createBaseNote(option, true, false, false, false, needsFilter);
     if (note.isGainValueZero) return null;
 
     const source = note.oscillator;
     // if (this.settings.soundQuality != 3) source.buffer = this.whitenoise;
     const gainNode = note.gainNode;
     const stopGainNode = note.stopGainNode;
+    const filter = note.filter;
     let start = note.start;
     const velocity = 1; // ドラム全体の音量調整用
-    let note2 = this.createBaseNote(option, false, false, true);
+    let note2 = this.createBaseNote(option, false, false, true, false, needsFilter);
     const oscillator = note2.oscillator;
     const gainNode2 = note2.gainNode;
     const stopGainNode2 = note2.stopGainNode;
@@ -47,6 +49,12 @@ export default function createPercussionNote(option) {
                             gainNode.gain.setValueAtTime(0, start);
                             gainNode.gain.linearRampToValueAtTime(velocity * 0.7, start + 0.004);
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.008);
+                            // Filter: lowpass sweep to tame noise harshness
+                            if (note.filter) {
+                                note.filter.frequency.setValueAtTime(12000, start);
+                                note.filter.frequency.setTargetAtTime(1000, start, 0.003);
+                                note.filter.Q.value = 0.7;
+                            }
                             stopAudioTime = 0.008;
                             // s
                             oscillator.frequency.setValueAtTime(option.pitch == 35 ? 90 : 160, start);
@@ -66,6 +74,12 @@ export default function createPercussionNote(option) {
                             source.playbackRate.value = 0.7;
                             gainNode.gain.setValueAtTime(velocity * 2.4, start);
                             gainNode.gain.setTargetAtTime(0, start, len * 0.4);
+                            // Filter: quick lowpass sweep shapes noise into snare bite
+                            if (note.filter) {
+                                note.filter.frequency.setValueAtTime(12000, start);
+                                note.filter.frequency.setTargetAtTime(4000, start, 0.015);
+                                note.filter.Q.value = 0.8;
+                            }
                             stopAudioTime = len;
                             // s
                             oscillator.frequency.setValueAtTime(option.pitch == 38 ? 150 : 175, start);
@@ -112,6 +126,13 @@ export default function createPercussionNote(option) {
                                 gainNode.gain.linearRampToValueAtTime(velocity * 0.36, start + 0.014);
                             }
                             gainNode.gain.linearRampToValueAtTime(0, start + 0.08);
+                            // Filter: highshelf-like bright emphasis, then rapid closure
+                            if (note.filter) {
+                                note.filter.type = 'highpass';
+                                note.filter.frequency.setValueAtTime(8000, start);
+                                note.filter.frequency.setTargetAtTime(12000, start, 0.015);
+                                note.filter.Q.value = 0.5;
+                            }
                             stopAudioTime = 0.08;
                             // s
                             gainNode2.gain.value = 0;
@@ -127,6 +148,13 @@ export default function createPercussionNote(option) {
                             source.playbackRate.linearRampToValueAtTime(1, start + 0.3);
                             gainNode.gain.setValueAtTime(velocity * 1.2, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.3);
+                            // Filter: highpass to remove rumble from cymbal noise
+                            if (note.filter) {
+                                note.filter.type = 'highpass';
+                                note.filter.frequency.setValueAtTime(1000, start);
+                                note.filter.frequency.setTargetAtTime(4000, start, 0.1);
+                                note.filter.Q.value = 0.5;
+                            }
                             stopAudioTime = 1.5;
                             // s
                             gainNode2.gain.value = 0;
@@ -146,6 +174,13 @@ export default function createPercussionNote(option) {
                             source.playbackRate.linearRampToValueAtTime(0.9, start + 0.4);
                             gainNode.gain.setValueAtTime(velocity * 1.3, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.35);
+                            // Filter: highpass to clean up cymbal noise
+                            if (note.filter) {
+                                note.filter.type = 'highpass';
+                                note.filter.frequency.setValueAtTime(1000, start);
+                                note.filter.frequency.setTargetAtTime(2500, start, 0.2);
+                                note.filter.Q.value = 0.5;
+                            }
                             stopAudioTime = 2;
                             // s
                             gainNode2.gain.value = 0;
@@ -160,6 +195,12 @@ export default function createPercussionNote(option) {
                             source.playbackRate.value = 1;
                             gainNode.gain.setValueAtTime(velocity * 1.1, start);
                             gainNode.gain.setTargetAtTime(0, start, 0.35);
+                            // Filter: highpass cleanup
+                            if (note.filter) {
+                                note.filter.frequency.setValueAtTime(12000, start);
+                                note.filter.frequency.setTargetAtTime(8000, start, 0.05);
+                                note.filter.Q.value = 0.5;
+                            }
                             stopAudioTime = 2;
                             // s
                             oscillator.type = "triangle";
