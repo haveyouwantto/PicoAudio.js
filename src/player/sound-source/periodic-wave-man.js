@@ -1,4 +1,8 @@
 import defaultWave from "./default-wave";
+import { miniIFFT } from "../audio/dsp";
+
+// Wavetable size: power-of-2 for IFFT, 2048 samples = one cycle
+const WAVETABLE_SIZE = 2048;
 
 const quickfadeArray = [
     // Piano
@@ -435,6 +439,79 @@ function findClosestNumberIndex(target) {
     }
 }
 
+// Convert harmonic coefficients (real/imag pairs) to time-domain wavetable via IFFT.
+// The output is a single-cycle waveform normalized to [-1, 1].
+function harmonicToTimeDomain(real, imag) {
+    const harmonicCount = real.length;
+    // Build a symmetric spectrum of size WAVETABLE_SIZE for real-valued time-domain output.
+    // Spectrum layout: [DC, pos_freqs..., 0, ..., neg_freqs_reversed...]
+    // For a real signal, X[N - k] = conj(X[k]).
+    const reSpec = new Float32Array(WAVETABLE_SIZE);
+    const imSpec = new Float32Array(WAVETABLE_SIZE);
+
+    // DC
+    reSpec[0] = real[0];
+    imSpec[0] = 0;
+
+    // Positive frequencies (harmonics 1..N-1)
+    for (let k = 1; k < harmonicCount && k < WAVETABLE_SIZE / 2; k++) {
+        reSpec[k] = real[k];
+        imSpec[k] = imag[k];
+        // Negative frequencies = conjugate of positive
+        reSpec[WAVETABLE_SIZE - k] = real[k];
+        imSpec[WAVETABLE_SIZE - k] = -imag[k];
+    }
+
+    // Nyquist bin (WAVETABLE_SIZE/2) - set to 0 if no coefficient there
+    reSpec[WAVETABLE_SIZE / 2] = 0;
+    imSpec[WAVETABLE_SIZE / 2] = 0;
+
+    // IFFT
+    miniIFFT(reSpec, imSpec);
+
+    // Normalize to [-1, 1]
+    let maxVal = 0;
+    for (let i = 0; i < WAVETABLE_SIZE; i++) {
+        const abs = Math.abs(reSpec[i]);
+        if (abs > maxVal) maxVal = abs;
+    }
+    if (maxVal > 0) {
+        for (let i = 0; i < WAVETABLE_SIZE; i++) {
+            reSpec[i] /= maxVal;
+        }
+    }
+
+    return reSpec;
+}
+
+/**
+ * Lazily get a wavetable AudioBuffer for a given instrument and octave.
+ * On first access, converts harmonic data to time-domain via IFFT and
+ * creates a loopable AudioBuffer (one full cycle). Subsequent calls return cached.
+ * @param {AudioContext} context 
+ * @param {number} instId MIDI program number (0-127)
+ * @param {number} octave Octave index (0-4)
+ * @returns {Object} instrument data with .wavetable (AudioBuffer) and .adsr
+ */
+export function getWaveTable(context, instId, octave = 2) {
+    let inst = instruments[octave][instId];
+    // Already cached?
+    if (inst.wavetable) {
+        return inst;
+    }
+    // Generate harmonic coefficients (same as getWave, cached on inst._samples)
+    if (!inst._samples) {
+        inst._samples = createWave(inst);
+    }
+    // IFFT to time domain
+    const timeDomain = harmonicToTimeDomain(inst._samples[0], inst._samples[1]);
+    // Create loopable AudioBuffer
+    const buffer = context.createBuffer(1, WAVETABLE_SIZE, context.sampleRate);
+    buffer.getChannelData(0).set(timeDomain);
+    inst.wavetable = buffer;
+    return inst;
+}
+
 export function getVolumeMul(note) {
     const val = (note - 45) / 12;
     if (val <= 0) return volumes[0];
@@ -443,4 +520,4 @@ export function getVolumeMul(note) {
     return volumes[i] + (volumes[i + 1] - volumes[i]) * (val - i);
 }
 
-export { quickfadeArray, findClosestNumberIndex, vibrato };
+export { quickfadeArray, findClosestNumberIndex, vibrato, WAVETABLE_SIZE };

@@ -1,9 +1,9 @@
 import InterpolationUtil from "../../util/interpolation-util";
-import { getWave, quickfadeArray, findClosestNumberIndex, getVolumeMul, vibrato } from "./periodic-wave-man";
+import { getWave, getWaveTable, quickfadeArray, findClosestNumberIndex, getVolumeMul, vibrato, WAVETABLE_SIZE } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
 
 export default function createNote(option) {
-    const isBuffer = this.settings.soundQuality == 3;
+    const isBuffer = this.settings.soundQuality == 1 || this.settings.soundQuality == 3;
     const note = this.createBaseNote(option, isBuffer, true, false, true); // oscillatorのstopはこちらで実行するよう指定
     if (note.isGainValueZero) return null;
 
@@ -68,10 +68,69 @@ export default function createNote(option) {
             }
             break;
 
-        case 1:
-            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
-            oscillator.setPeriodicWave(inst.wave);
+        case 1: {
+            const inst = getWaveTable(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+            oscillator.buffer = inst.wavetable;
+            // Set playbackRate so the wavetable cycles at the correct frequency.
+            // wavetable recorded at sampleRate has fund freq = sampleRate / WAVETABLE_SIZE,
+            // so we need playbackRate = targetFreq * WAVETABLE_SIZE / sampleRate.
+            if (note.pitch) {
+                oscillator.playbackRate.value = note.pitch * WAVETABLE_SIZE / this.context.sampleRate;
+            }
+            // Re-schedule pitch bend on playbackRate (not detune).
+            // createBaseNote's isBuffer path scheduled detune with octave offset + bend,
+            // but we use playbackRate for base pitch. Pitch bend moves to playbackRate
+            // so that detune stays free for vibrato overlay.
+            oscillator.detune.cancelScheduledValues(0);
+            oscillator.detune.value = 0;
+            if (option.pitchBend && option.pitchBend.length && note.pitch) {
+                const songStartTime = this.states.startTime;
+                const baseLatency = this.baseLatency;
+                const baseRate = note.pitch * WAVETABLE_SIZE / this.context.sampleRate;
+                option.pitchBend.forEach((p) => {
+                    const t = Math.max(0, p.time + songStartTime + baseLatency);
+                    // Convert semitone offset to playbackRate multiplier: rate * 2^(semitones/12)
+                    oscillator.playbackRate.setValueAtTime(
+                        baseRate * Math.pow(2, p.value / 12),
+                        t
+                    );
+                });
+            }
+            // Setup modulation (CC1) — skipped by createBaseNote's isBuffer path
+            // because it only connects modulation to oscillator.frequency (OscillatorNode only).
+            // For BufferSource we route modulation to oscillator.detune.
+            if (option.modulation && (option.modulation.length >= 2 || option.modulation[0].value > 0) && note.pitch) {
+                const modOsc = this.context.createOscillator();
+                const modGain = this.context.createGain();
+                // Original: modGain.value = pitch * 10/440 * m, connected to oscillator.frequency (Hz).
+                // Conversion to detune (cents): cents = 1200 * log2(1 + delta_f/f).
+                // For small mod: cents ≈ 1200/(f*ln2) * delta = 1200/(f*ln2) * (f*10/440*m) = 1200*10/(440*ln2)*m ≈ 39.3*m.
+                // So removal of pitch factor is correct: detune needs a pure m with a ~39.3x scaling.
+                const centsScale = (1200 * 10) / (440 * Math.LN2); // ≈ 39.35 cents per unit m
+                const scaleNode = this.context.createGain();
+                scaleNode.gain.value = centsScale;
+                const initialM = Math.min(1.0, option.modulation[0].value / 127);
+                modGain.gain.value = initialM;
+                const songStartTime = this.states.startTime;
+                const baseLatency = this.baseLatency;
+                let firstNode = true;
+                option.modulation.forEach((p) => {
+                    if (firstNode) { firstNode = false; return; }
+                    const m = Math.min(1.0, p.value / 127);
+                    const t = Math.max(0, p.time + songStartTime + baseLatency);
+                    modGain.gain.setValueAtTime(m, t);
+                });
+                modOsc.frequency.value = 6;
+                modOsc.connect(modGain);
+                modGain.connect(scaleNode);
+                scaleNode.connect(oscillator.detune);
+                modOsc.start(note.start);
+                this.stopAudioNode(modOsc, note.stop, modGain);
+            }
+            // Cache inst ref on note for envelope reuse below, avoiding duplicate getWaveTable() call
+            note._inst = inst;
             break;
+        }
 
         case 3:
             oscillator.loop = !quickfadeArray[option.instrument];
@@ -89,7 +148,8 @@ export default function createNote(option) {
     }
 
     // 音の終わりのプチプチノイズが気になるので、音の終わりに5ms減衰してノイズ軽減 //
-    if ((oscillator.type == "sine" || oscillator.type == "triangle")
+    // Only applies to OscillatorNode (not BufferSource used by quality=1/3)
+    if (!isBuffer && (oscillator.type == "sine" || oscillator.type == "triangle")
         && !isPizzicato && note.stop - note.start > 0.01) {
         isNoiseCut = true;
     }
@@ -166,7 +226,9 @@ export default function createNote(option) {
             break;
         case -1:
         case 1: {
-            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+            // quality=1: inst already resolved & cached by the waveform selection block above
+            let inst = note._inst;
+            if (!inst) inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
             // Apply envelope to note
             let instEnvelope = inst.adsr;
             const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
@@ -258,13 +320,14 @@ export default function createNote(option) {
                 const decayTime = Math.max(decay * 1.7 * Math.pow(2, (60 - option.pitch) / 18), 0.5);
 
                 // 获取当前音符的基频和基础明亮度
-                const pitchFreq = oscillator.frequency.value;
+                // Use note.pitch for BufferSource compatibility (no .frequency property)
+                const pitchFreq = isBuffer ? note.pitch : oscillator.frequency.value;
                 const cutoffFreq = 492.35 * Math.exp(2.5 * option.velocity);
 
                 const nyquist = this.context.sampleRate / 2;
 
                 // 低频亮度补偿：低音弦在拨动时通常产生比例更高的瞬态分量。
-                // 以 60 (C4) 为基点，每低 3 个八度补偿约 2 倍的倍率，让低音更“脆”。
+                // 以 60 (C4) 为基点，每低 3 个八度补偿约 2 倍的倍率，让低音更"脆"。
                 const pitchComp = Math.pow(2, (60 - option.pitch) / 36);
 
                 // 初始阶段：必须足够高，包含完整的拨弦瞬态泛音
@@ -272,10 +335,10 @@ export default function createNote(option) {
                 const filterStart = Math.min(Math.max(pitchFreq * 4 * pitchComp, cutoffFreq * 1.5), nyquist);
 
                 // 目标阶段：滤波器闭合的目标，不能过高（过高会导致失去滤波效果，像没加 filter），
-                // 同时不能低于基频的 1.2 倍（防止高音被“吃”掉发闷）。
+                // 同时不能低于基频的 1.2 倍（防止高音被"吃"掉发闷）。
                 const filterTarget = Math.min(Math.max(pitchFreq * 1.2, cutoffFreq * 0.05), nyquist);
 
-                // 滤波器收敛速度：必须保持较快，产生“迅速消退的明亮感”。
+                // 滤波器收敛速度：必须保持较快，产生"迅速消退的明亮感"。
                 // 不能用 decay，否则低音衰减太慢，导致听感如同没加filter。
                 const filterDecay = decayTime / 6;
 
@@ -288,7 +351,8 @@ export default function createNote(option) {
                 if (option.expression) {
                     const songStartTime = this.states.startTime;
                     const baseLatency = this.baseLatency;
-                    const pitchFreq = oscillator.frequency.value || 440;
+                    // Use note.pitch for BufferSource compatibility (no .frequency property)
+                    const pitchFreq = isBuffer ? note.pitch : (oscillator.frequency.value || 440);
                     const nyquist = this.context.sampleRate / 2;
 
                     // 将 Expression (CC11) 映射到滤波器截断频率
