@@ -4,7 +4,8 @@ import { getSample } from "./soundbank";
 
 export default function createNote(option) {
     const isBuffer = this.settings.soundQuality == 1 || this.settings.soundQuality == 3;
-    const note = this.createBaseNote(option, isBuffer, true, false, true); // oscillatorのstopはこちらで実行するよう指定
+    const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1;
+    const note = this.createBaseNote(option, isBuffer, true, false, true, true); // oscillatorのstopはこちらで実行するよう指定
     if (note.isGainValueZero) return null;
 
     const oscillator = note.oscillator;
@@ -305,8 +306,10 @@ export default function createNote(option) {
                 const filterDecay = decayTime / 6;
 
                 gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
-                filter.frequency.setValueAtTime(filterStart, note.start + attackClamped);
-                filter.frequency.setTargetAtTime(filterTarget, note.start + attackClamped, filterDecay);
+                if (filter) {
+                    filter.frequency.setValueAtTime(filterStart, note.start + attackClamped);
+                    filter.frequency.setTargetAtTime(filterTarget, note.start + attackClamped, filterDecay);
+                }
             } else {
                 gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
 
@@ -328,7 +331,7 @@ export default function createNote(option) {
                         const targetFreq = baseCutoff + (maxCutoff - baseCutoff) * Math.pow(expScale, 4);
 
                         // 使用 setTargetAtTime 确保 expression point 之间有平滑过渡
-                        filter.frequency.linearRampToValueAtTime(targetFreq, t);
+                        if (filter) filter.frequency.linearRampToValueAtTime(targetFreq, t);
                     });
                 }
             }

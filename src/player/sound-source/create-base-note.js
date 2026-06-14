@@ -1,6 +1,6 @@
 import { findClosestNumberIndex } from "./periodic-wave-man";
 
-export default function createBaseNote(option, isBuffer, isExpression, nonChannel, nonStop) {
+export default function createBaseNote(option, isBuffer, isExpression, nonChannel, nonStop, needsFilter = false) {
     // 最低限の変数を準備（無音の場合は処理終了するため） //
     const settings = this.settings;
     const context = this.context;
@@ -145,15 +145,20 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
 
 
     // Create Biquad filter for subtraction synthesis
-    const biquadFilter = context.createBiquadFilter();
-    biquadFilter.type = 'lowpass';
-    biquadFilter.frequency.value = 20000;
-    biquadFilter.Q.value = 1;
-    biquadFilter.gain.value = 0;
+    let biquadFilter = null;
+    if (needsFilter) {
+        biquadFilter = context.createBiquadFilter();
+        biquadFilter.type = 'lowpass';
+        biquadFilter.frequency.value = 20000;
+        biquadFilter.Q.value = 1;
+        biquadFilter.gain.value = 0;
 
-    // AudioNodeを接続 //
-    expGainNode.connect(biquadFilter);
-    biquadFilter.connect(gainNode);
+        // AudioNodeを接続 //
+        expGainNode.connect(biquadFilter);
+        biquadFilter.connect(gainNode);
+    } else {
+        expGainNode.connect(gainNode);
+    }
     gainNode.connect(stopGainNode);
     stopGainNode.connect(this.masterGainNode);
     // this.masterGainNode.connect(context.destination);

@@ -122,8 +122,8 @@ class PicoAudio {
      * @param {boolean} nonStop
      * @returns {Object} AudioNodeやパラメータを返す
      */
-    createBaseNote(option, isDrum, isExpression, nonChannel, nonStop) {
-        return createBaseNote.call(this, option, isDrum, isExpression, nonChannel, nonStop);
+    createBaseNote(option, isDrum, isExpression, nonChannel, nonStop, needsFilter) {
+        return createBaseNote.call(this, option, isDrum, isExpression, nonChannel, nonStop, needsFilter);
     }
     /**
      * 音源（パーカッション以外）
