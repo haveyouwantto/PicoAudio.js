@@ -116,6 +116,7 @@ export default function createPercussionNote(option) {
                     case 42: // Closed High-Hat
                     case 44: // Pedal High-Hat
                         {
+                            const freq = option.pitch == 42 ? 3200 : 3600;
                             // w
                             source.buffer = this.cymbalnoise;
                             source.playbackRate.value = 1;
@@ -135,8 +136,11 @@ export default function createPercussionNote(option) {
                             }
                             stopAudioTime = 0.08;
                             // s
-                            gainNode2.gain.value = 0;
-                            stopAudioTime2 = 0;
+                            oscillator.type = "triangle";
+                            oscillator.frequency.setValueAtTime(freq, start);
+                            gainNode2.gain.setValueAtTime(velocity * 0.01, start);
+                            gainNode2.gain.setTargetAtTime(0, start, 0.1);
+                            stopAudioTime2 = 0.1;
                             break;
                         }
                     case 46: // Open Hihat
