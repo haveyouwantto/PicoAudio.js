@@ -1,5 +1,5 @@
 import InterpolationUtil from "../../util/interpolation-util";
-import { getWave, getWaveTable, quickfadeArray, findClosestNumberIndex, getVolumeMul, vibrato, WAVETABLE_SIZE } from "./periodic-wave-man";
+import { getWave, getWaveTable, quickfadeArray, findClosestNumberIndex, getVolumeMul, WAVETABLE_SIZE } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
 
 export default function createNote(option) {
@@ -240,7 +240,7 @@ export default function createNote(option) {
             // Setup vibrato effect (real-time OscillatorNode LFO — avoids expensive
             // setValueCurveAtTime with 4410-element Float32Array per note).
             try {
-                const instrumentVibrato = vibrato[option.instrument];
+                const instrumentVibrato = inst.vibrato;
                 if (instrumentVibrato > 0) {
                     const vibOsc = this.context.createOscillator();
                     const vibGain = this.context.createGain();
