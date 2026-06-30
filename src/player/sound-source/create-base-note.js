@@ -7,7 +7,7 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
     const songStartTime = this.states.startTime;
     const baseLatency = this.baseLatency;
     const channel = nonChannel ? 0 : (option.channel || 0);
-    const velocity = (option.velocity) * Number(nonChannel ? 1 : (this.channels[channel][2] != null ? this.channels[channel][2] : 1)) * settings.generateVolume;
+    const velocity = (option.velocity ** 2) * Number(nonChannel ? 1 : (this.channels[channel][2] != null ? this.channels[channel][2] : 1)) * settings.generateVolume;
     let isGainValueZero = true;
 
     // 無音の場合は処理終了 //
