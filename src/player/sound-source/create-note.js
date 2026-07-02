@@ -413,62 +413,63 @@ export default function createNote(option) {
             }
 
         case 4: {
-            // SF2 envelope: ported from quality=1 ADSR, using parsed SF2 envelope
+            // SF2 envelope
             const sf2Env = note._sf2Envelope || { delay: 0, attack: 0.001, hold: 0, decay: 0, sustain: 1.0, release: 0.05 };
             console.log(`SF2 Envelope for instrument ${option.instrument}, pitch ${option.pitch}:`, sf2Env);
-            const isPluck = quickfadeArray[option.instrument];
+            // Generic SF2 ADSR schedule (delay → attack → hold → decay → sustain → release)
+            // Use linear ramps and avoid special-casing by instrument type here.
             let velocity = gainNode.gain.value * 1.3;
+            const attackStart = note.start + (sf2Env.delay || 0);
+            const attackTime = Math.max(sf2Env.attack || 0, 0.001);
+            const holdTime = Math.max(sf2Env.hold || 0, 0);
+            const decayTime = Math.max(sf2Env.decay || 0, 0.001);
+            const sustainLevel = typeof sf2Env.sustain === 'number' ? sf2Env.sustain : 1.0;
+            const releaseTime = Math.max(sf2Env.release || 0.05, 0.001);
 
-            gainNode.gain.setValueAtTime(0, note.start);
+            // Start scheduling
+            gainNode.gain.setValueAtTime(0, attackStart);
+            // Attack to peak
+            gainNode.gain.linearRampToValueAtTime(velocity, attackStart + attackTime);
+            const attackEnd = attackStart + attackTime;
+            const decayStart = attackEnd + holdTime;
 
-            // Delay + Attack
-            if (isPluck) {
-                velocity *= getVolumeMul(option.pitch);
-            }
-            const attackStart = note.start + sf2Env.delay;
-            const attackTime = Math.max(sf2Env.attack, 0.001);
-            gainNode.gain.setTargetAtTime(velocity, attackStart, attackTime / 3);
+            // Decay to sustain level
+            gainNode.gain.linearRampToValueAtTime(velocity * sustainLevel, decayStart + decayTime);
 
-            // Hold + Decay
-            const decayStart = attackStart + sf2Env.attack + sf2Env.hold;
-            if (isPluck) {
-                const decayTime = Math.max(sf2Env.decay * 1.7 * Math.pow(2, (60 - option.pitch) / 18), 0.1);
+            // Expression/filter handling remains but is independent of ADSR shape
+            if (option.expression && filter) {
+                const songStartTime = this.states.startTime;
+                const baseLatency = this.baseLatency;
                 const pitchFreq = isBuffer ? note.pitch : 440;
-                const cutoffFreq = 492.35 * Math.exp(2.5 * option.velocity);
                 const nyquist = this.context.sampleRate / 2;
-                const pitchComp = Math.pow(2, (60 - option.pitch) / 36);
-                const filterStart = Math.min(Math.max(pitchFreq * 4 * pitchComp, cutoffFreq * 1.5), nyquist);
-                const filterTarget = Math.min(Math.max(pitchFreq * 1.2, cutoffFreq * 0.05), nyquist);
-                const filterDecay = decayTime / 6;
-
-                gainNode.gain.setTargetAtTime(0, decayStart, decayTime / 2);
-                if (filter) {
-                    filter.frequency.setValueAtTime(filterStart, decayStart);
-                    filter.frequency.setTargetAtTime(filterTarget, decayStart, filterDecay);
-                }
-            } else {
-                const decayTime = Math.max(sf2Env.decay, 0.001);
-                gainNode.gain.setTargetAtTime(velocity * sf2Env.sustain, decayStart, decayTime / 2);
-                if (option.expression && filter) {
-                    const songStartTime = this.states.startTime;
-                    const baseLatency = this.baseLatency;
-                    const pitchFreq = isBuffer ? note.pitch : 440;
-                    const nyquist = this.context.sampleRate / 2;
-                    option.expression.forEach((p) => {
-                        const t = Math.max(0, p.time + songStartTime + baseLatency);
-                        const expScale = p.value / 127;
-                        const baseCutoff = pitchFreq * 4;
-                        const maxCutoff = Math.min(nyquist, 16000);
-                        const targetFreq = baseCutoff + (maxCutoff - baseCutoff) * Math.pow(expScale, 4);
-                        filter.frequency.linearRampToValueAtTime(targetFreq, t);
-                    });
-                }
+                option.expression.forEach((p) => {
+                    const t = Math.max(0, p.time + songStartTime + baseLatency);
+                    const expScale = p.value / 127;
+                    const baseCutoff = pitchFreq * 4;
+                    const maxCutoff = Math.min(nyquist, 16000);
+                    const targetFreq = baseCutoff + (maxCutoff - baseCutoff) * Math.pow(expScale, 4);
+                    filter.frequency.linearRampToValueAtTime(targetFreq, t);
+                });
             }
 
-            // Release
-            const releaseClamped = Math.min(sf2Env.release, 0.25);
-            gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
-            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
+            // Release: estimate current level at note.stop and ramp to 0
+            const releaseStart = note.stop;
+            const releaseEnd = note.stop + releaseTime;
+            function estimateLevelAt(t) {
+                if (t <= attackStart) return 0;
+                if (t <= attackEnd) return velocity * ((t - attackStart) / attackTime);
+                if (t <= decayStart) return velocity;
+                const decayEnd = decayStart + decayTime;
+                if (t <= decayEnd) {
+                    const frac = (t - decayStart) / decayTime;
+                    return velocity * (1 - frac * (1 - sustainLevel));
+                }
+                return velocity * sustainLevel;
+            }
+            const preReleaseLevel = Math.max(0, estimateLevelAt(releaseStart));
+            gainNode.gain.setValueAtTime(preReleaseLevel, releaseStart);
+            gainNode.gain.linearRampToValueAtTime(0, releaseEnd);
+            this.stopAudioNode(oscillator, releaseEnd, stopGainNode, isNoiseCut);
             break;
         }
     }
