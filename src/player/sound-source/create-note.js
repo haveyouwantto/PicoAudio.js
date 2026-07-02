@@ -138,7 +138,7 @@ export default function createNote(option) {
             oscillator.loop = !quickfadeArray[option.instrument];
             const octave = findClosestNumberIndex(option.pitch);
             const sample = getSample(this.context, option.instrument, octave);
-            
+
             if (sample && sample instanceof Promise) {
                 sample.then(decoded => {
                     if (decoded) {
@@ -183,6 +183,19 @@ export default function createNote(option) {
                     + (sf2Info.fineTune + sf2Info.correction) / 100;
                 const rate = Math.pow(2, semitoneOffset / 12);
                 oscillator.playbackRate.value = rate;
+
+                // Support pitch bend: schedule playbackRate changes based on pitchBend points
+                if (option.pitchBend && option.pitchBend.length) {
+                    const songStartTime = this.states.startTime;
+                    const baseLatency = this.baseLatency;
+                    option.pitchBend.forEach((p) => {
+                        const t = Math.max(0, p.time + songStartTime + baseLatency);
+                        oscillator.playbackRate.setValueAtTime(
+                            rate * Math.pow(2, p.value / 12),
+                            t
+                        );
+                    });
+                }
 
                 // Set loop points (convert sample frames → seconds)
                 const sampleRate = sf2Info.originalSampleRate;
@@ -415,7 +428,6 @@ export default function createNote(option) {
         case 4: {
             // SF2 envelope
             const sf2Env = note._sf2Envelope || { delay: 0, attack: 0.001, hold: 0, decay: 0, sustain: 1.0, release: 0.05 };
-            console.log(`SF2 Envelope for instrument ${option.instrument}, pitch ${option.pitch}:`, sf2Env);
             // Generic SF2 ADSR schedule (delay → attack → hold → decay → sustain → release)
             // Use linear ramps and avoid special-casing by instrument type here.
             let velocity = gainNode.gain.value * 1.3;
@@ -423,18 +435,18 @@ export default function createNote(option) {
             const attackTime = Math.max(sf2Env.attack || 0, 0.001);
             const holdTime = Math.max(sf2Env.hold || 0, 0);
             const decayTime = Math.max(sf2Env.decay || 0, 0.001);
-            const sustainLevel = typeof sf2Env.sustain === 'number' ? sf2Env.sustain : 1.0;
+            const sustainLevel = sf2Env.sustain || 1.0;
             const releaseTime = Math.max(sf2Env.release || 0.05, 0.001);
 
             // Start scheduling
             gainNode.gain.setValueAtTime(0, attackStart);
             // Attack to peak
-            gainNode.gain.linearRampToValueAtTime(velocity, attackStart + attackTime);
+            gainNode.gain.setTargetAtTime(velocity, attackStart, attackTime * 0.33);
             const attackEnd = attackStart + attackTime;
             const decayStart = attackEnd + holdTime;
 
-            // Decay to sustain level
-            gainNode.gain.linearRampToValueAtTime(velocity * sustainLevel, decayStart + decayTime);
+            // Decay to sustain level (ensure we start from peak at decayStart)
+            gainNode.gain.setTargetAtTime(velocity * sustainLevel, decayStart, decayTime * 0.33); // Ensure we don't schedule past note.stop
 
             // Expression/filter handling remains but is independent of ADSR shape
             if (option.expression && filter) {
@@ -468,7 +480,7 @@ export default function createNote(option) {
             }
             const preReleaseLevel = Math.max(0, estimateLevelAt(releaseStart));
             gainNode.gain.setValueAtTime(preReleaseLevel, releaseStart);
-            gainNode.gain.linearRampToValueAtTime(0, releaseEnd);
+            gainNode.gain.setTargetAtTime(0, releaseStart, releaseTime * 0.33);
             this.stopAudioNode(oscillator, releaseEnd, stopGainNode, isNoiseCut);
             break;
         }
