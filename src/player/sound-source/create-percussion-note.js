@@ -1,7 +1,8 @@
 import { getDrumSample } from "./soundbank";
+import { getSF2Sample, isSF2Loaded } from "./sf2-provider";
 
 export default function createPercussionNote(option) {
-    const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1;
+    const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1 || this.settings.soundQuality == 4;
     const note = this.createBaseNote(option, true, false, false, false, needsFilter);
     if (note.isGainValueZero) return null;
 
@@ -24,6 +25,26 @@ export default function createPercussionNote(option) {
     let stopAudioTime = 0;
     let stopAudioTime2 = 0;
     switch (this.settings.soundQuality) {
+        case 4:
+            // SF2 SoundFont drum sample playback
+            {
+                source.loop = false;
+                gainNode2.gain.value = 0;
+                stopAudioTime2 = 0;
+                const sf2Info = getSF2Sample(option.pitch, option.pitch, true);
+                if (sf2Info) {
+                    source.buffer = sf2Info.buffer;
+                    const semitoneOffset = option.pitch - sf2Info.rootKey + sf2Info.correction / 100;
+                    source.playbackRate.value = Math.pow(2, semitoneOffset / 12);
+                    source.loop = false;
+                    stopAudioTime = Math.min(4, sf2Info.buffer.duration);
+                    gainNode.gain.value = velocity * 1.5;
+                } else {
+                    gainNode.gain.value = 0;
+                    stopAudioTime = 0.01;
+                }
+            }
+            break;
         case 3:
             gainNode.gain.value = velocity * 1.5;
             gainNode2.gain.value = 0;

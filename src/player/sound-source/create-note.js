@@ -1,10 +1,11 @@
 import InterpolationUtil from "../../util/interpolation-util";
 import { getWave, getWaveTable, quickfadeArray, findClosestNumberIndex, getVolumeMul, WAVETABLE_SIZE } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
+import { getSF2Sample, isSF2Loaded } from "./sf2-provider";
 
 export default function createNote(option) {
-    const isBuffer = this.settings.soundQuality == 1 || this.settings.soundQuality == 3;
-    const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1;
+    const isBuffer = this.settings.soundQuality == 1 || this.settings.soundQuality == 3 || this.settings.soundQuality == 4;
+    const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1 || this.settings.soundQuality == 4;
     const note = this.createBaseNote(option, isBuffer, true, false, true, needsFilter); // oscillatorのstopはこちらで実行するよう指定
     if (note.isGainValueZero) return null;
 
@@ -158,6 +159,45 @@ export default function createNote(option) {
             oscillator.loopStart = Math.max(loopEnd - 1, 0.2);
             oscillator.loopEnd = loopEnd;
             break;
+
+        case 4: {
+            // SF2 SoundFont sample playback (synchronous — all samples pre-decoded)
+            oscillator.loop = true;
+            const inst = option.instrument;
+            const pitch = option.pitch;
+            const sf2Info = getSF2Sample(inst, pitch, false);
+
+            // Cancel the detune that createBaseNote set for buffer path —
+            // we use playbackRate for pitch, detune stays 0
+            oscillator.detune.cancelScheduledValues(0);
+            oscillator.detune.value = 0;
+
+            if (sf2Info) {
+                oscillator.buffer = sf2Info.buffer;
+
+                // Calculate playback rate based on pitch relative to root key.
+                // coarseTune = semitones, fineTune = cents, correction = sample header cents.
+                // rate = 2^((pitch - rootKey + coarseTune + (fineTune + correction)/100) / 12)
+                const semitoneOffset = pitch - sf2Info.rootKey + sf2Info.coarseTune
+                    + (sf2Info.fineTune - sf2Info.correction) / 100;
+                const rate = Math.pow(2, semitoneOffset / 12);
+                oscillator.playbackRate.value = rate;
+
+                // Set loop points (convert sample frames → seconds)
+                const sampleRate = sf2Info.originalSampleRate;
+                if (sf2Info.loopMode === 0) {
+                    oscillator.loop = false;
+                } else {
+                    oscillator.loop = true;
+                    oscillator.loopStart = sf2Info.startLoop / sampleRate;
+                    oscillator.loopEnd = sf2Info.endLoop / sampleRate;
+                }
+
+                // Cache envelope for the release/decay section below
+                note._sf2Envelope = sf2Info.envelope;
+            }
+            break;
+        }
     }
 
     // 音の終わりのプチプチノイズが気になるので、音の終わりに5ms減衰してノイズ軽減 //
@@ -359,19 +399,77 @@ export default function createNote(option) {
             break;
 
         case 3:
-            let inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
-            // Apply envelope to note
-            let instEnvelope = inst.adsr;
-            const release = instEnvelope[3];
-            let velocity = gainNode.gain.value * 1.5;
+            {
+                let inst2 = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
+                let instEnvelope2 = inst2.adsr;
+                const release3 = instEnvelope2[3];
+                let vel3 = gainNode.gain.value * 1.5;
+                gainNode.gain.setValueAtTime(vel3, note.start);
+                const releaseClamped3 = Math.min(release3, 0.25);
+                gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped3 / 3);
+                this.stopAudioNode(oscillator, note.stop + releaseClamped3, stopGainNode, isNoiseCut);
+                break;
+            }
 
-            gainNode.gain.setValueAtTime(velocity, note.start);
+        case 4: {
+            // SF2 envelope: ported from quality=1 ADSR, using parsed SF2 envelope
+            const sf2Env = note._sf2Envelope || { delay: 0, attack: 0.001, hold: 0, decay: 0, sustain: 1.0, release: 0.05 };
+            console.log(`SF2 Envelope for instrument ${option.instrument}, pitch ${option.pitch}:`, sf2Env);
+            const isPluck = quickfadeArray[option.instrument];
+            let velocity = gainNode.gain.value * 1.3;
 
-            // Release phase
-            const releaseClamped = Math.min(release, 0.25);
+            gainNode.gain.setValueAtTime(0, note.start);
+
+            // Delay + Attack
+            if (isPluck) {
+                velocity *= getVolumeMul(option.pitch);
+            }
+            const attackStart = note.start + sf2Env.delay;
+            const attackTime = Math.max(sf2Env.attack, 0.001);
+            gainNode.gain.setTargetAtTime(velocity, attackStart, attackTime / 3);
+
+            // Hold + Decay
+            const decayStart = attackStart + sf2Env.attack + sf2Env.hold;
+            if (isPluck) {
+                const decayTime = Math.max(sf2Env.decay * 1.7 * Math.pow(2, (60 - option.pitch) / 18), 0.1);
+                const pitchFreq = isBuffer ? note.pitch : 440;
+                const cutoffFreq = 492.35 * Math.exp(2.5 * option.velocity);
+                const nyquist = this.context.sampleRate / 2;
+                const pitchComp = Math.pow(2, (60 - option.pitch) / 36);
+                const filterStart = Math.min(Math.max(pitchFreq * 4 * pitchComp, cutoffFreq * 1.5), nyquist);
+                const filterTarget = Math.min(Math.max(pitchFreq * 1.2, cutoffFreq * 0.05), nyquist);
+                const filterDecay = decayTime / 6;
+
+                gainNode.gain.setTargetAtTime(0, decayStart, decayTime / 2);
+                if (filter) {
+                    filter.frequency.setValueAtTime(filterStart, decayStart);
+                    filter.frequency.setTargetAtTime(filterTarget, decayStart, filterDecay);
+                }
+            } else {
+                const decayTime = Math.max(sf2Env.decay, 0.001);
+                gainNode.gain.setTargetAtTime(velocity * sf2Env.sustain, decayStart, decayTime / 2);
+                if (option.expression && filter) {
+                    const songStartTime = this.states.startTime;
+                    const baseLatency = this.baseLatency;
+                    const pitchFreq = isBuffer ? note.pitch : 440;
+                    const nyquist = this.context.sampleRate / 2;
+                    option.expression.forEach((p) => {
+                        const t = Math.max(0, p.time + songStartTime + baseLatency);
+                        const expScale = p.value / 127;
+                        const baseCutoff = pitchFreq * 4;
+                        const maxCutoff = Math.min(nyquist, 16000);
+                        const targetFreq = baseCutoff + (maxCutoff - baseCutoff) * Math.pow(expScale, 4);
+                        filter.frequency.linearRampToValueAtTime(targetFreq, t);
+                    });
+                }
+            }
+
+            // Release
+            const releaseClamped = Math.min(sf2Env.release, 0.25);
             gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
-
             this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
+            break;
+        }
     }
 
     // 音をストップさせる関数を返す //

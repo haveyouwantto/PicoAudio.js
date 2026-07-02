@@ -22,6 +22,7 @@ import parseSMF from './smf/parse-smf.js';
 import startWebMIDI from './web-midi/start-web-midi.js';
 import { loadWaves } from './player/sound-source/periodic-wave-man.js';
 import { loadSamples } from './player/sound-source/soundbank.js';
+import { loadSF2, isSF2Loaded } from './player/sound-source/sf2-provider.js';
 
 class PicoAudio {
     /**
@@ -253,6 +254,19 @@ class PicoAudio {
 
     loadSamples(buffer) {
         loadSamples(buffer)
+    }
+
+    loadSF2(buffer) {
+        // loadSF2 needs AudioContext — use the one from the instance
+        if (!this.context) {
+            console.error('SF2: AudioContext not initialized');
+            return false;
+        }
+        return loadSF2(this.context, buffer);
+    }
+
+    isSF2Loaded() {
+        return isSF2Loaded();
     }
     
     getDuration() {
