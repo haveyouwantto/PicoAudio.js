@@ -178,8 +178,9 @@ export default function createNote(option) {
                 // Calculate playback rate based on pitch relative to root key.
                 // coarseTune = semitones, fineTune = cents, correction = sample header cents.
                 // rate = 2^((pitch - rootKey + coarseTune + (fineTune + correction)/100) / 12)
-                const semitoneOffset = pitch - sf2Info.rootKey + sf2Info.coarseTune
-                    + (sf2Info.fineTune - sf2Info.correction) / 100;
+                // Note: fineTune and correction are additive (both in cents).
+                const semitoneOffset = pitch - sf2Info.rootKey + (sf2Info.coarseTune || 0)
+                    + (sf2Info.fineTune + sf2Info.correction) / 100;
                 const rate = Math.pow(2, semitoneOffset / 12);
                 oscillator.playbackRate.value = rate;
 

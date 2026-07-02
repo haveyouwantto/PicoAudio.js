@@ -34,7 +34,8 @@ export default function createPercussionNote(option) {
                 const sf2Info = getSF2Sample(option.pitch, option.pitch, true);
                 if (sf2Info) {
                     source.buffer = sf2Info.buffer;
-                    const semitoneOffset = option.pitch - sf2Info.rootKey + sf2Info.correction / 100;
+                    const semitoneOffset = option.pitch - sf2Info.rootKey + (sf2Info.coarseTune || 0)
+                        + (sf2Info.fineTune + sf2Info.correction) / 100;
                     source.playbackRate.value = Math.pow(2, semitoneOffset / 12);
                     source.loop = false;
                     stopAudioTime = Math.min(4, sf2Info.buffer.duration);
