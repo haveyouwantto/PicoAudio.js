@@ -136,15 +136,27 @@ export default function createNote(option) {
         case 3:
             oscillator.loop = !quickfadeArray[option.instrument];
             const octave = findClosestNumberIndex(option.pitch);
-            getSample(this.context, option.instrument, octave).then(sample => {
+            const sample = getSample(this.context, option.instrument, octave);
+            
+            if (sample && sample instanceof Promise) {
+                sample.then(decoded => {
+                    if (decoded) {
+                        oscillator.buffer = decoded;
+                    }
+                }).catch(err => {
+                    console.error(err);
+                }
+                );
+            } else if (sample) {
                 oscillator.buffer = sample;
-                const loopEnd = Math.max(sample.duration - 0.2, 2);
-                oscillator.loopStart = Math.max(loopEnd - 1, 0.2);
-                oscillator.loopEnd = loopEnd;
-            });
+            }
+
             const baseNote = 45 + octave * 12;
             oscillator.basePitch = (option.pitch - baseNote) * 100;
             oscillator.detune.value = oscillator.basePitch;
+            const loopEnd = Math.max((sample.duration ?? 2) - 0.2, 2);
+            oscillator.loopStart = Math.max(loopEnd - 1, 0.2);
+            oscillator.loopEnd = loopEnd;
             break;
     }
 

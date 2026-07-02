@@ -56,17 +56,21 @@ async function decodeSample(ctx, octave, instId) {
 }
 
 // Get the waveform for a specific instrument and octave (default octave is 2)
-export async function getSample(ctx, instId, octave = 2) {
+export function getSample(ctx, instId, octave = 2) {
     if (waveCache[octave] && waveCache[octave][instId]) {
         // If cached, return the cached waveform
         return waveCache[octave][instId];
     }
-    const decoded = decodeSample(ctx, octave, instId)
-    if (decoded) {
-        waveCache[octave][instId] = decoded;
-    }
-    return decoded;
-
+    return new Promise((resolve, reject) => {
+        decodeSample(ctx, octave, instId).then(decoded => {
+            if (decoded) {
+                waveCache[octave][instId] = decoded;
+            }
+            resolve(decoded);
+        }).catch(err => {
+            reject(err);
+        });
+    });
 }
 
 export async function getDrumSample(ctx, key) {
