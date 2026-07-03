@@ -374,6 +374,7 @@ function parseGenRange(gens, genStart, genEnd) {
         sampleModes: -1,  // -1 means "not set" (inherit from global)
         coarseTune: 0,    // semitones
         fineTune: 0,      // cents
+        initialAttenuation: 0, // centibels
     };
 
     for (let g = genStart; g < genEnd && g < gens.length; g++) {
@@ -401,6 +402,9 @@ function parseGenRange(gens, genStart, genEnd) {
                 break;
             case SF2Gen.fineTune:
                 result.fineTune = signed16(gen.amount);
+                break;
+            case SF2Gen.initialAttenuation:
+                result.initialAttenuation = signed16(gen.amount);
                 break;
         }
     }
@@ -485,6 +489,8 @@ function buildInstrumentSamples(instruments, instrumentBags, instrumentGens, sam
             const rootKey = zone.rootKey >= 0 ? zone.rootKey : globalGens.rootKey >= 0 ? globalGens.rootKey : shdr.originalKey;
             const velLo = zone.velRangeLo !== 0 ? zone.velRangeLo : globalGens.velRangeLo;
             const velHi = zone.velRangeHi !== 127 ? zone.velRangeHi : globalGens.velRangeHi;
+            const attenuationCb = zone.initialAttenuation !== 0 ? zone.initialAttenuation : (globalGens.initialAttenuation || 0);
+            const gain = centibelsToGain(attenuationCb);
 
             // Merge envelopes: zone values override global defaults
             const mergedEnv = {
@@ -517,6 +523,7 @@ function buildInstrumentSamples(instruments, instrumentBags, instrumentGens, sam
                 sampleEnd: shdr.end,
                 loopMode,
                 envelope: mergedEnv,
+                gain,
             });
         }
         result.push({ name: inst.name, samples });

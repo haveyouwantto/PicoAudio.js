@@ -41,6 +41,7 @@ export default function createPercussionNote(option) {
 
                     // Use SF2 envelope for drum sample playback
                     const sf2Env = sf2Info.envelope || { delay: 0, attack: 0.001, hold: 0, decay: 0, sustain: 1.0, release: 0.05 };
+                    const sf2Gain = sf2Info.gain != null ? sf2Info.gain : 1;
                     const attackStart = note.start + (sf2Env.delay || 0);
                     const attackTime = Math.max(sf2Env.attack || 0, 0.001);
                     const holdTime = Math.max(sf2Env.hold || 0, 0);
@@ -48,7 +49,7 @@ export default function createPercussionNote(option) {
                     const sustainLevel = sf2Env.sustain || 1.0;
                     const releaseTime = Math.max(sf2Env.release || 0.05, 0.001);
 
-                    const peakGain = velocity * 1.5;
+                    const peakGain = velocity * 1.5 //* sf2Gain;
                     gainNode.gain.setValueAtTime(0, attackStart);
                     gainNode.gain.setTargetAtTime(peakGain, attackStart, attackTime * 0.33);
                     const decayStart = attackStart + attackTime + holdTime;

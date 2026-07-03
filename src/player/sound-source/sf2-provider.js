@@ -153,6 +153,7 @@ export function getSF2Sample(program, pitch, isDrum = false, bank = 0) {
         endLoop: loopEndFrames,
         loopMode: bestSample.loopMode,
         originalSampleRate: bestSample.sampleRate,
+        gain: bestSample.gain != null ? bestSample.gain : 1,
         envelope: bestSample.envelope || {
             delay: 0,
             attack: 0.001,

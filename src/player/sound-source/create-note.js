@@ -210,6 +210,7 @@ export default function createNote(option) {
 
                 // Cache envelope for the release/decay section below
                 note._sf2Envelope = sf2Info.envelope;
+                note._sf2Gain = sf2Info.gain != null ? sf2Info.gain : 1;
             }
             break;
         }
@@ -429,10 +430,10 @@ export default function createNote(option) {
         case 4: {
             // SF2 envelope
             const sf2Env = note._sf2Envelope || { delay: 0, attack: 0.001, hold: 0, decay: 0, sustain: 1.0, release: 0.05 };
-            console.log('SF2 Envelope:', sf2Env);
+            // console.log('SF2 Envelope:', sf2Env, note._sf2Gain);
             // Generic SF2 ADSR schedule (delay → attack → hold → decay → sustain → release)
             // Use linear ramps and avoid special-casing by instrument type here.
-            let velocity = gainNode.gain.value * 1.3;
+            let velocity = gainNode.gain.value //* (note._sf2Gain != null ? note._sf2Gain : 1);
             const attackStart = note.start + (sf2Env.delay || 0);
             const attackTime = Math.max(sf2Env.attack || 0, 0.001);
             const holdTime = Math.max(sf2Env.hold || 0, 0);
