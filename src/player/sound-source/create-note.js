@@ -433,7 +433,7 @@ export default function createNote(option) {
             // console.log('SF2 Envelope:', sf2Env, note._sf2Gain);
             // Generic SF2 ADSR schedule (delay → attack → hold → decay → sustain → release)
             // Use linear ramps and avoid special-casing by instrument type here.
-            let velocity = gainNode.gain.value //* (note._sf2Gain != null ? note._sf2Gain : 1);
+            let velocity = gainNode.gain.value * 1.5 //* (note._sf2Gain != null ? note._sf2Gain : 1);
             const attackStart = note.start + (sf2Env.delay || 0);
             const attackTime = Math.max(sf2Env.attack || 0, 0.001);
             const holdTime = Math.max(sf2Env.hold || 0, 0);
