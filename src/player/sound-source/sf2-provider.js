@@ -10,7 +10,7 @@
  *   const info = getSF2Sample(0, 69, false); // Sync! Returns {buffer, envelope, ...} or null
  */
 
-import { parseSF2, decodeSF2Sample, getProgramEntry } from "./sf2-parser";
+import { parseSF2, decodeSF2Sample, getProgramEntry, findSample } from "./sf2-parser";
 
 /** Parsed SF2 data (set by loadSF2) */
 let sf2Data = null;

@@ -166,7 +166,7 @@ export default function createNote(option) {
             const inst = option.instrument;
             const pitch = option.pitch;
             const bank = option.bank || 0;
-            const sf2Info = getSF2Sample(inst, pitch, false, bank);
+            const sf2Info = getSF2Sample(inst, pitch, false, bank, option.velocity * 127);
 
             // Cancel the detune that createBaseNote set for buffer path —
             // we use playbackRate for pitch, detune stays 0
@@ -443,12 +443,12 @@ export default function createNote(option) {
             // Start scheduling
             gainNode.gain.setValueAtTime(0, attackStart);
             // Attack to peak
-            gainNode.gain.setTargetAtTime(velocity, attackStart, attackTime * 0.33);
+            gainNode.gain.setTargetAtTime(velocity, attackStart, attackTime * 0.25);
             const attackEnd = attackStart + attackTime;
             const decayStart = attackEnd + holdTime;
 
             // Decay to sustain level (ensure we start from peak at decayStart)
-            gainNode.gain.setTargetAtTime(velocity * sustainLevel, decayStart, decayTime * 0.33); 
+            gainNode.gain.setTargetAtTime(velocity * sustainLevel, decayStart, decayTime * 0.25); 
 
             // Expression/filter handling remains but is independent of ADSR shape
             if (option.expression && filter) {
@@ -469,7 +469,7 @@ export default function createNote(option) {
             // Release: estimate current level at note.stop and ramp to 0
             const releaseStart = note.stop;
             const releaseEnd = note.stop + releaseTime;
-            gainNode.gain.setTargetAtTime(0, releaseStart, releaseTime * 0.33);
+            gainNode.gain.setTargetAtTime(0, releaseStart, releaseTime * 0.25);
             this.stopAudioNode(oscillator, releaseEnd, stopGainNode, isNoiseCut);
             break;
         }

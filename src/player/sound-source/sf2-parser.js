@@ -615,7 +615,7 @@ export function decodeSF2Sample(sampleData, start, end) {
  * @param {boolean} isDrum - Whether this is a drum channel
  * @returns {Object|null} Matching sample info or null
  */
-export function findSample(programSamples, program, key, isDrum = false, bank = 0) {
+export function findSample(programSamples, program, key, isDrum = false, bank = 0, velocity = 127) {
     const mapKey = isDrum ? `drum_${bank}:${program}` : `${bank}:${program}`;
     let entry = programSamples.get(mapKey);
     if (!entry) {
@@ -623,13 +623,23 @@ export function findSample(programSamples, program, key, isDrum = false, bank = 
     }
     if (!entry) return null;
 
-    // Find sample that covers this key range
+    const vel = Math.max(0, Math.min(127, velocity));
+    let bestKeyVelocitySample = null;
+    let bestKeySample = null;
+
     for (const sample of entry.samples) {
-        if (key >= sample.keyRangeLo && key <= sample.keyRangeHi) {
+        const keyMatch = key >= sample.keyRangeLo && key <= sample.keyRangeHi;
+        const velMatch = vel >= sample.velRangeLo && vel <= sample.velRangeHi;
+        if (keyMatch && velMatch) {
             return sample;
         }
+        if (keyMatch && !bestKeySample) {
+            bestKeySample = sample;
+        }
     }
-    // Fallback: return first sample
+
+    // Prefer a key match over any sample
+    if (bestKeySample) return bestKeySample;
     return entry.samples[0] || null;
 }
 
