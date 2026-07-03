@@ -84,6 +84,7 @@ export function isSF2Loaded() {
  * @param {number} program  - MIDI program (instrument) number 0-127
  * @param {number} pitch    - MIDI note number 0-127 (used for key-range matching)
  * @param {boolean} [isDrum=false] - Whether this is a drum channel (channel 10)
+ * @param {number} [bank=0]  - MIDI bank number for SF2 preset lookup
  * @returns {{
  *   buffer: AudioBuffer,
  *   rootKey: number,
@@ -95,28 +96,29 @@ export function isSF2Loaded() {
  *   envelope: { delay: number, attack: number, hold: number, decay: number, sustain: number, release: number }
  * } | null}
  */
-export function getSF2Sample(program, pitch, isDrum = false) {
+export function getSF2Sample(program, pitch, isDrum = false, bank = 0) {
     if (!sf2Data) return null;
 
     let entry = null;
 
     if (isDrum) {
-        // Drum kits: SF2 stores a single drum preset (typically preset=0),
-        // and individual drum sounds are differentiated by key range.
-        // Iterate all drum kit entries and find one with a sample matching this pitch.
-        for (const [key, e] of sf2Data.programSamples) {
-            if (e.isDrum) {
-                for (const sample of e.samples) {
-                    if (pitch >= sample.keyRangeLo && pitch <= sample.keyRangeHi) {
-                        entry = e;
-                        break;
+        entry = getProgramEntry(sf2Data.programSamples, program, true, bank);
+        if (!entry) {
+            // Fallback for drum kits without explicit bank mapping.
+            for (const [key, e] of sf2Data.programSamples) {
+                if (e.isDrum) {
+                    for (const sample of e.samples) {
+                        if (pitch >= sample.keyRangeLo && pitch <= sample.keyRangeHi) {
+                            entry = e;
+                            break;
+                        }
                     }
+                    if (entry) break;
                 }
-                if (entry) break;
             }
         }
     } else {
-        entry = getProgramEntry(sf2Data.programSamples, program, isDrum);
+        entry = getProgramEntry(sf2Data.programSamples, program, isDrum, bank);
     }
 
     if (!entry) return null;

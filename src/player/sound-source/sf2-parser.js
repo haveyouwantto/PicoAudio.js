@@ -566,7 +566,9 @@ function buildProgramMap(presetHeaders, presetBags, presetGens, instrumentSample
             if (instrumentIndex >= 0 && instrumentIndex < instrumentSamples.length) {
                 const instSamples = instrumentSamples[instrumentIndex];
                 if (instSamples.samples.length > 0) {
-                    const key = isDrum ? `drum_${preset.presetNum}` : `${preset.presetNum}`;
+                    const key = isDrum
+                        ? `drum_${preset.bank}:${preset.presetNum}`
+                        : `${preset.bank}:${preset.presetNum}`;
                     if (!programMap.has(key)) {
                         programMap.set(key, {
                             name: preset.name,
@@ -613,9 +615,12 @@ export function decodeSF2Sample(sampleData, start, end) {
  * @param {boolean} isDrum - Whether this is a drum channel
  * @returns {Object|null} Matching sample info or null
  */
-export function findSample(programSamples, program, key, isDrum = false) {
-    const mapKey = isDrum ? `drum_${key}` : `${program}`;
-    const entry = programSamples.get(mapKey);
+export function findSample(programSamples, program, key, isDrum = false, bank = 0) {
+    const mapKey = isDrum ? `drum_${bank}:${program}` : `${bank}:${program}`;
+    let entry = programSamples.get(mapKey);
+    if (!entry) {
+        entry = programSamples.get(isDrum ? `drum_${program}` : `${program}`) || null;
+    }
     if (!entry) return null;
 
     // Find sample that covers this key range
@@ -631,9 +636,19 @@ export function findSample(programSamples, program, key, isDrum = false) {
 /**
  * Get program entry from parsed SF2 data
  */
-export function getProgramEntry(programSamples, program, isDrum = false) {
-    const mapKey = isDrum ? `drum_${program}` : `${program}`;
-    return programSamples.get(mapKey) || null;
+export function getProgramEntry(programSamples, program, isDrum = false, bank = 0) {
+    const keys = [];
+    if (isDrum) {
+        keys.push(`drum_${bank}:${program}`);
+        keys.push(`drum_${program}`);
+    } else {
+        keys.push(`${bank}:${program}`);
+        keys.push(`${program}`);
+    }
+    for (const key of keys) {
+        if (programSamples.has(key)) return programSamples.get(key);
+    }
+    return null;
 }
 
 export { timecentsToSeconds, centibelsToGain };

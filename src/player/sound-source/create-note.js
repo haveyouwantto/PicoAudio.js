@@ -165,7 +165,8 @@ export default function createNote(option) {
             oscillator.loop = true;
             const inst = option.instrument;
             const pitch = option.pitch;
-            const sf2Info = getSF2Sample(inst, pitch, false);
+            const bank = option.bank || 0;
+            const sf2Info = getSF2Sample(inst, pitch, false, bank);
 
             // Cancel the detune that createBaseNote set for buffer path —
             // we use playbackRate for pitch, detune stays 0
@@ -428,9 +429,10 @@ export default function createNote(option) {
         case 4: {
             // SF2 envelope
             const sf2Env = note._sf2Envelope || { delay: 0, attack: 0.001, hold: 0, decay: 0, sustain: 1.0, release: 0.05 };
+            console.log('SF2 Envelope:', sf2Env);
             // Generic SF2 ADSR schedule (delay → attack → hold → decay → sustain → release)
             // Use linear ramps and avoid special-casing by instrument type here.
-            let velocity = gainNode.gain.value;
+            let velocity = gainNode.gain.value * 1.3;
             const attackStart = note.start + (sf2Env.delay || 0);
             const attackTime = Math.max(sf2Env.attack || 0, 0.001);
             const holdTime = Math.max(sf2Env.hold || 0, 0);
@@ -446,7 +448,7 @@ export default function createNote(option) {
             const decayStart = attackEnd + holdTime;
 
             // Decay to sustain level (ensure we start from peak at decayStart)
-            gainNode.gain.setTargetAtTime(velocity * sustainLevel, decayStart, decayTime * 0.33); // Ensure we don't schedule past note.stop
+            gainNode.gain.setTargetAtTime(velocity * sustainLevel, decayStart, decayTime * 0.33); 
 
             // Expression/filter handling remains but is independent of ADSR shape
             if (option.expression && filter) {
@@ -467,19 +469,6 @@ export default function createNote(option) {
             // Release: estimate current level at note.stop and ramp to 0
             const releaseStart = note.stop;
             const releaseEnd = note.stop + releaseTime;
-            function estimateLevelAt(t) {
-                if (t <= attackStart) return 0;
-                if (t <= attackEnd) return velocity * ((t - attackStart) / attackTime);
-                if (t <= decayStart) return velocity;
-                const decayEnd = decayStart + decayTime;
-                if (t <= decayEnd) {
-                    const frac = (t - decayStart) / decayTime;
-                    return velocity * (1 - frac * (1 - sustainLevel));
-                }
-                return velocity * sustainLevel;
-            }
-            const preReleaseLevel = Math.max(0, estimateLevelAt(releaseStart));
-            gainNode.gain.setValueAtTime(preReleaseLevel, releaseStart);
             gainNode.gain.setTargetAtTime(0, releaseStart, releaseTime * 0.33);
             this.stopAudioNode(oscillator, releaseEnd, stopGainNode, isNoiseCut);
             break;

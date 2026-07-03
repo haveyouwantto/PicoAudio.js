@@ -39,6 +39,8 @@ export default function parseEvent(info) {
         let rpnLsb = 127;
         let rpnMsb = 127;
         let instrument = 0;
+        let bankMSB = 0;
+        let bankLSB = 0;
         let masterVolume = 127;
         tempo = 120;
         tempoCurTick = 0;
@@ -74,7 +76,8 @@ export default function parseEvent(info) {
                             holdBeforeStop: null,
                             reverb: [{timing:tick,time:time,value:reverb}],
                             chorus: [{timing:tick,time:time,value:chorus}],
-                            instrument: instrument,
+                                instrument: instrument,
+                            bank: (bankMSB << 7) | bankLSB,
                             channel: ch,
                             nextSameNoteOnInterval: -1,
                             drumStopTime: 2 // 再生時に使う
@@ -198,6 +201,12 @@ export default function parseEvent(info) {
                                     value: expression*(masterVolume/127)
                                 });
                             });
+                            break;
+                        case 32: // Bank Select LSB
+                            bankLSB = smf[p+2];
+                            break;
+                        case 0: // Bank Select MSB
+                            bankMSB = smf[p+2];
                             break;
                         case 64: // Hold1
                             hold = smf[p+2];
