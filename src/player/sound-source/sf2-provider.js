@@ -32,6 +32,7 @@ export function loadSF2(ctx, arrayBuffer) {
 
         // Pre-decode every sample into an AudioBuffer
         // Skip terminator samples (sampleRate=0, start=end=0)
+        const paired = new Set();
         for (let i = 0; i < sf2Data.sampleHeaders.length; i++) {
             const shdr = sf2Data.sampleHeaders[i];
             if (!shdr || shdr.sampleRate === 0 || shdr.start >= shdr.end) {
@@ -48,7 +49,72 @@ export function loadSF2(ctx, arrayBuffer) {
             }
 
             // Create an AudioBuffer at the sample rate of the SF2 file
-            const audioBuffer = ctx.createBuffer(1, floatSamples.length, shdr.sampleRate);
+            // Stereo pairing logic: use instrument-scoped pan values to decide L/R pairing.
+            // We no longer rely on sampleLink stitching across instruments.
+            if (paired.has(i)) {
+                // already created as part of a stereo pair and stored
+                continue;
+            }
+
+            let audioBuffer = null;
+            const meta = sf2Data.sampleMeta && sf2Data.sampleMeta[i];
+            if (meta && meta.instrumentIndex != null) {
+                const instIdx = meta.instrumentIndex;
+                const inst = sf2Data.instrumentSamples[instIdx];
+                if (inst && inst.samples) {
+                    // Look for a partner within the same instrument whose pan is on the opposite side
+                    const thisPan = (meta.pan != null) ? meta.pan : 64;
+                    // Candidate: pan < 64 vs pan > 64 (skip centered)
+                    const wantLeft = thisPan < 64;
+                    let partner = null;
+                    for (const cand of inst.samples) {
+                        if (cand.sampleId === i) continue;
+                        const candMeta = sf2Data.sampleMeta && sf2Data.sampleMeta[cand.sampleId];
+                        const candPan = cand.pan != null ? cand.pan : (candMeta && candMeta.pan != null ? candMeta.pan : 64);
+                        // require opposite side (left vs right). Ignore centered partners.
+                        if (wantLeft && candPan > 64) {
+                            partner = cand;
+                        } else if (!wantLeft && candPan < 64) {
+                            partner = cand;
+                        }
+                        if (partner) {
+                            // basic overlap checks: similar sampleRate and similar length
+                            const linkedHdr = sf2Data.sampleHeaders[partner.sampleId];
+                            if (!linkedHdr) { partner = null; continue; }
+                            if (linkedHdr.sampleRate !== shdr.sampleRate) { partner = null; continue; }
+                            const len1 = shdr.end - shdr.start;
+                            const len2 = linkedHdr.end - linkedHdr.start;
+                            const maxDiff = Math.max(128, Math.floor(len1 * 0.1));
+                            if (Math.abs(len1 - len2) > maxDiff) { partner = null; continue; }
+                            // also check key/vel range compatibility (must overlap)
+                            const candZone = partner;
+                            const currZone = inst.samples.find(s => s.sampleId === i) || {};
+                            const keyOverlap = !(currZone.keyRangeHi < candZone.keyRangeLo || currZone.keyRangeLo > candZone.keyRangeHi);
+                            const velOverlap = !(currZone.velRangeHi < candZone.velRangeLo || currZone.velRangeLo > candZone.velRangeHi);
+                            if (!keyOverlap || !velOverlap) { partner = null; continue; }
+                            // If passes checks, we will decode both into stereo
+                            break;
+                        }
+                    }
+                    if (partner) {
+                        const linkedHdr = sf2Data.sampleHeaders[partner.sampleId];
+                        const floatSamples2 = decodeSF2Sample(sf2Data.sampleData, linkedHdr.start, linkedHdr.end);
+                        const outLen = Math.max(floatSamples.length, floatSamples2.length);
+                        audioBuffer = ctx.createBuffer(2, outLen, shdr.sampleRate);
+                        audioBuffer.getChannelData(0).set(floatSamples);
+                        audioBuffer.getChannelData(1).set(floatSamples2);
+                        sf2BufferCache[i] = audioBuffer;
+                        // Also store same stereo buffer for partner id so lookups by either id return stereo
+                        sf2BufferCache[partner.sampleId] = audioBuffer;
+                        paired.add(i);
+                        paired.add(partner.sampleId);
+                        continue;
+                    }
+                }
+            }
+
+            // No valid instrument-pan partner found — decode as mono
+            audioBuffer = ctx.createBuffer(1, floatSamples.length, shdr.sampleRate);
             audioBuffer.getChannelData(0).set(floatSamples);
             sf2BufferCache[i] = audioBuffer;
         }

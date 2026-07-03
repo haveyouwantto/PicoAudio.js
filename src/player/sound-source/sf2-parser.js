@@ -30,6 +30,7 @@ const SF2Gen = {
     coarseTune:      51,   // Coarse tuning (semitones)
     fineTune:        52,   // Fine tuning (cents)
     scaleTuning:     38,   // Scale tuning (cents) — instrument context
+    initialPan:      17,   // Initial pan (0..127, 64=center)
     overridingRootKey: 58, // Overriding root key
 
     // Volume Envelope (timecents: 1 unit = 0.001 second? no, timecents: 1 = 2^(1/1200) second ratio)
@@ -180,12 +181,28 @@ export function parseSF2(arrayBuffer) {
         presetHeaders, presetBags, presetGens, instrumentSamples
     );
 
+    // Build a quick lookup of sampleId -> metadata (pan, instrumentIndex)
+    const sampleMeta = {};
+    for (let instIdx = 0; instIdx < instrumentSamples.length; instIdx++) {
+        const inst = instrumentSamples[instIdx];
+        if (!inst || !inst.samples) continue;
+        for (const s of inst.samples) {
+            if (s && typeof s.sampleId === 'number') {
+                sampleMeta[s.sampleId] = {
+                    pan: s.pan != null ? s.pan : 64,
+                    instrumentIndex: instIdx
+                };
+            }
+        }
+    }
+
     return {
         sampleData,
         sampleHeaders,
         programSamples,
         instruments,
-        instrumentSamples
+        instrumentSamples,
+        sampleMeta
     };
 }
 
@@ -375,6 +392,7 @@ function parseGenRange(gens, genStart, genEnd) {
         coarseTune: 0,    // semitones
         fineTune: 0,      // cents
         initialAttenuation: 0, // centibels
+        pan: 64,
     };
 
     for (let g = genStart; g < genEnd && g < gens.length; g++) {
@@ -405,6 +423,9 @@ function parseGenRange(gens, genStart, genEnd) {
                 break;
             case SF2Gen.initialAttenuation:
                 result.initialAttenuation = signed16(gen.amount);
+                break;
+            case SF2Gen.initialPan:
+                result.pan = gen.amount & 0xFF; // store raw 0-127
                 break;
         }
     }
@@ -524,6 +545,7 @@ function buildInstrumentSamples(instruments, instrumentBags, instrumentGens, sam
                 loopMode,
                 envelope: mergedEnv,
                 gain,
+                pan: (zone.pan != null) ? zone.pan : (globalGens.pan != null ? globalGens.pan : 64),
             });
         }
         result.push({ name: inst.name, samples });
