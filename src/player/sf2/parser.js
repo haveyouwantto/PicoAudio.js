@@ -3,15 +3,12 @@
  * Returns only structured parsed data. No lookup or selection logic.
  */
 
-import { SF2Gen, timecentsToSeconds, centibelsToGain } from './constants.js';
+import { SF2Gen, signed16 } from './constants.js';
 import { readString, parseSampleHeaders, parseInstruments, parseBags, parseGenerators, parsePresetHeaders } from './io.js';
 import { buildInstrumentSamples } from './builder.js';
-import { decodeSF2Sample as _decodeSF2Sample } from './decoder.js';
+import { decodeSF2Sample } from './decoder.js';
 
-// IO helpers are provided by ./io.js
-
-// Parser now performs a full low-level parse and returns raw tables.
-// Provider will implement selection/merging/pairing logic.
+export { decodeSF2Sample };
 
 export function parseSF2(arrayBuffer) {
     const dataView = new DataView(arrayBuffer);
@@ -86,7 +83,7 @@ export function parseSF2(arrayBuffer) {
     if (!sampleData) throw new Error('SF2: No sample data found');
 
     // Build structured instruments (zones -> samples)
-    const instrumentSamples = buildInstrumentSamples(instruments, instrumentBags, instrumentGens, sampleHeaders, (v)=>v>32767?v-65536:v);
+    const instrumentSamples = buildInstrumentSamples(instruments, instrumentBags, instrumentGens, sampleHeaders, signed16);
 
     // samples: attach id to headers for convenience
     const samples = sampleHeaders.map((shdr, idx) => ({ id: idx, ...shdr }));
@@ -129,7 +126,3 @@ export function parseSF2(arrayBuffer) {
 
     return { samples, instruments: instrumentSamples, presets, sampleData };
 }
-export { timecentsToSeconds, centibelsToGain };
-export const decodeSF2Sample = _decodeSF2Sample;
-
-export default { parseSF2, decodeSF2Sample };
