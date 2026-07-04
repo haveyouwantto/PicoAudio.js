@@ -444,12 +444,12 @@ export default function createNote(option) {
             // Start scheduling
             gainNode.gain.setValueAtTime(0, attackStart);
             // Attack to peak
-            gainNode.gain.setTargetAtTime(velocity, attackStart, attackTime * 0.25);
+            gainNode.gain.setTargetAtTime(velocity, Math.min(attackStart, note.stop), attackTime * 0.25);
             const attackEnd = attackStart + attackTime;
             const decayStart = attackEnd + holdTime;
 
             // Decay to sustain level (ensure we start from peak at decayStart)
-            gainNode.gain.setTargetAtTime(velocity * sustainLevel, decayStart, decayTime * 0.25); 
+            gainNode.gain.setTargetAtTime(velocity * sustainLevel, Math.min(decayStart, note.stop), decayTime * 0.25);
 
             // Expression/filter handling remains but is independent of ADSR shape
             if (option.expression && filter) {
