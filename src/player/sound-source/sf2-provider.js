@@ -11,6 +11,8 @@
  */
 
 import { parseSF2, decodeSF2Sample } from "../sf2/parser";
+import { buildInstrumentSamples, buildProgramMap } from "../sf2/builder.js";
+import { signed16 } from "../sf2/constants.js";
 
 /** Parsed SF2 data (set by loadSF2) */
 let sf2Data = null;
@@ -26,15 +28,46 @@ const sf2BufferCache = [];
  */
 export function loadSF2(ctx, arrayBuffer) {
     try {
-        sf2Data = parseSF2(arrayBuffer);
+        const parsed = parseSF2(arrayBuffer);
+        console.log('SF2 parsed successfully:', parsed);
+        // Build derived tables used by the provider (provider owns selection logic)
+        // Parser now returns structured {samples, instruments, presets}
+        const instrumentSamples = parsed.instruments;
+        const sampleHeaders = parsed.samples; // keep legacy name
+        const programSamples = new Map();
+        // Build programSamples map from presets (provider owns selection merging)
+        for (const preset of parsed.presets) {
+            const key = preset.isDrum ? `drum_${preset.bank}:${preset.program}` : `${preset.bank}:${preset.program}`;
+            if (!programSamples.has(key)) programSamples.set(key, { name: preset.name, program: preset.program, bank: preset.bank, isDrum: preset.isDrum, samples: [] });
+            const entry = programSamples.get(key);
+            for (const zone of preset.zones) {
+                const instIdx = zone.instrumentIndex;
+                if (instIdx >= 0 && instIdx < instrumentSamples.length) {
+                    entry.samples.push(...instrumentSamples[instIdx].samples);
+                }
+            }
+        }
+
+        const sampleMeta = {};
+        for (let instIdx = 0; instIdx < instrumentSamples.length; instIdx++) {
+            const inst = instrumentSamples[instIdx];
+            if (!inst || !inst.samples) continue;
+            for (const s of inst.samples) {
+                if (s && typeof s.sampleId === 'number') {
+                    sampleMeta[s.sampleId] = { pan: s.pan != null ? s.pan : 64, instrumentIndex: instIdx };
+                }
+            }
+        }
+        sf2Data = Object.assign({}, parsed, { instrumentSamples, programSamples, sampleMeta });
+        console.log('SF2 parsed successfully:', sf2Data);
         // Clear any previous cache
         sf2BufferCache.length = 0;
 
         // Pre-decode every sample into an AudioBuffer
         // Skip terminator samples (sampleRate=0, start=end=0)
         const paired = new Set();
-        for (let i = 0; i < sf2Data.sampleHeaders.length; i++) {
-            const shdr = sf2Data.sampleHeaders[i];
+        for (let i = 0; i < sampleHeaders.length; i++) {
+            const shdr = sampleHeaders[i];
             if (!shdr || shdr.sampleRate === 0 || shdr.start >= shdr.end) {
                 sf2BufferCache[i] = null;
                 continue;
@@ -79,7 +112,7 @@ export function loadSF2(ctx, arrayBuffer) {
                         }
                         if (partner) {
                             // basic overlap checks: similar sampleRate and similar length
-                            const linkedHdr = sf2Data.sampleHeaders[partner.sampleId];
+                            const linkedHdr = sampleHeaders[partner.sampleId];
                             if (!linkedHdr) { partner = null; continue; }
                             if (linkedHdr.sampleRate !== shdr.sampleRate) { partner = null; continue; }
                             const len1 = shdr.end - shdr.start;
@@ -97,8 +130,8 @@ export function loadSF2(ctx, arrayBuffer) {
                         }
                     }
                     if (partner) {
-                        const linkedHdr = sf2Data.sampleHeaders[partner.sampleId];
-                        const floatSamples2 = decodeSF2Sample(sf2Data.sampleData, linkedHdr.start, linkedHdr.end);
+                        const linkedHdr = sampleHeaders[partner.sampleId];
+                        const floatSamples2 = decodeSF2Sample(parsed.sampleData, linkedHdr.start, linkedHdr.end);
                         const outLen = Math.max(floatSamples.length, floatSamples2.length);
                         audioBuffer = ctx.createBuffer(2, outLen, shdr.sampleRate);
                         audioBuffer.getChannelData(0).set(floatSamples);
@@ -118,8 +151,9 @@ export function loadSF2(ctx, arrayBuffer) {
             audioBuffer.getChannelData(0).set(floatSamples);
             sf2BufferCache[i] = audioBuffer;
         }
-
-        console.log(`SF2 loaded: ${sf2Data.sampleHeaders.length} samples decoded, ${sf2Data.programSamples.size} programs`);
+        // Populate sf2Data for external inspection and lookups
+        sf2Data = Object.assign({}, parsed, { sampleHeaders, instrumentSamples, programSamples, sampleMeta });
+        console.log(`SF2 loaded: ${sampleHeaders.length} samples decoded, ${programSamples.size} programs`);
         return true;
     } catch (e) {
         console.error('Failed to parse SF2:', e);
@@ -222,6 +256,25 @@ export function getSF2Sample(program, pitch, isDrum = false, bank = 0) {
     const sampleStart = bestSample.sampleStart;
     const loopStartFrames = Math.max(0, bestSample.startLoop - sampleStart);
     const loopEndFrames = Math.max(loopStartFrames + 1, bestSample.endLoop - sampleStart);
+    // Compute runtime gain/envelope from parsed generators (zone overrides global)
+    function mergeGenerators(zoneGens, globalGens) {
+        const out = {};
+        if (globalGens) Object.assign(out, globalGens);
+        if (zoneGens) Object.assign(out, zoneGens);
+        return out;
+    }
+
+    const merged = mergeGenerators(bestSample.generators, bestSample.globalGenerators);
+    const gain = (merged && merged.initialAttenuation_gain != null) ? merged.initialAttenuation_gain : 1;
+    const envelope = {
+        delay: (merged && merged.delayVolEnv != null) ? merged.delayVolEnv : 0,
+        attack: (merged && merged.attackVolEnv != null) ? merged.attackVolEnv : 0.001,
+        hold: (merged && merged.holdVolEnv != null) ? merged.holdVolEnv : 0,
+        decay: (merged && merged.decayVolEnv != null) ? merged.decayVolEnv : 0,
+        sustain: (merged && merged.sustainVolEnv != null) ? merged.sustainVolEnv : 1.0,
+        release: (merged && merged.releaseVolEnv != null) ? merged.releaseVolEnv : 0.01
+    };
+    const pan = (merged && merged.pan != null) ? merged.pan : (bestSample.pan != null ? bestSample.pan : 64);
 
     return {
         buffer,
@@ -233,15 +286,9 @@ export function getSF2Sample(program, pitch, isDrum = false, bank = 0) {
         endLoop: loopEndFrames,
         loopMode: bestSample.loopMode,
         originalSampleRate: bestSample.sampleRate,
-        gain: bestSample.gain != null ? bestSample.gain : 1,
-        envelope: bestSample.envelope || {
-            delay: 0,
-            attack: 0.001,
-            hold: 0,
-            decay: 0,
-            sustain: 1.0,
-            release: 0.01
-        }
+        gain,
+        envelope,
+        pan
     };
 }
 

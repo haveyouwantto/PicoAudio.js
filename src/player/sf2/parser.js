@@ -5,16 +5,13 @@
 
 import { SF2Gen, timecentsToSeconds, centibelsToGain } from './constants.js';
 import { readString, parseSampleHeaders, parseInstruments, parseBags, parseGenerators, parsePresetHeaders } from './io.js';
-import { extractEnvelope, mergeEnvelopes } from './envelope.js';
-import { buildInstrumentSamples as _buildInstrumentSamples, buildProgramMap as _buildProgramMap } from './builder.js';
+import { buildInstrumentSamples } from './builder.js';
 import { decodeSF2Sample as _decodeSF2Sample } from './decoder.js';
 
 // IO helpers are provided by ./io.js
 
-// Re-use builder and envelope modules for clarity.
-// The builder exports buildInstrumentSamples and buildProgramMap already.
-const buildInstrumentSamples = _buildInstrumentSamples;
-const buildProgramMap = _buildProgramMap;
+// Parser now performs a full low-level parse and returns raw tables.
+// Provider will implement selection/merging/pairing logic.
 
 export function parseSF2(arrayBuffer) {
     const dataView = new DataView(arrayBuffer);
@@ -88,21 +85,49 @@ export function parseSF2(arrayBuffer) {
 
     if (!sampleData) throw new Error('SF2: No sample data found');
 
+    // Build structured instruments (zones -> samples)
     const instrumentSamples = buildInstrumentSamples(instruments, instrumentBags, instrumentGens, sampleHeaders, (v)=>v>32767?v-65536:v);
-    const programSamples = buildProgramMap(presetHeaders, presetBags, presetGens, instrumentSamples);
 
-    const sampleMeta = {};
-    for (let instIdx = 0; instIdx < instrumentSamples.length; instIdx++) {
-        const inst = instrumentSamples[instIdx];
-        if (!inst || !inst.samples) continue;
-        for (const s of inst.samples) {
-            if (s && typeof s.sampleId === 'number') {
-                sampleMeta[s.sampleId] = { pan: s.pan != null ? s.pan : 64, instrumentIndex: instIdx };
+    // samples: attach id to headers for convenience
+    const samples = sampleHeaders.map((shdr, idx) => ({ id: idx, ...shdr }));
+
+    // presets: build a list of presets with zones that reference instrument indices
+    const presets = [];
+    for (let i = 0; i < presetHeaders.length - 1; i++) {
+        const preset = presetHeaders[i];
+        const nextBagIndex = presetHeaders[i + 1].bagIndex;
+        const bagStart = preset.bagIndex;
+        const bagEnd = nextBagIndex;
+        const isDrum = preset.bank >= 120;
+        const zones = [];
+        for (let b = bagStart; b < bagEnd; b++) {
+            const bag = presetBags[b];
+            const nextBag = (b + 1 < presetBags.length) ? presetBags[b + 1] : null;
+            const genStart = bag.genIndex;
+            const genEnd = nextBag ? nextBag.genIndex : presetGens.length;
+            let instrumentIndex = -1;
+            let keyRangeLo = 0;
+            let keyRangeHi = 127;
+            for (let g = genStart; g < genEnd && g < presetGens.length; g++) {
+                const gen = presetGens[g];
+                switch (gen.type) {
+                    case SF2Gen.keyRange:
+                        keyRangeLo = gen.amount & 0xFF;
+                        keyRangeHi = (gen.amount >> 8) & 0xFF;
+                        break;
+                    case SF2Gen.instrument:
+                        instrumentIndex = gen.amount;
+                        break;
+                }
+            }
+            if (instrumentIndex >= 0) {
+                zones.push({ instrumentIndex, keyRangeLo, keyRangeHi });
             }
         }
+        presets.push({ name: preset.name, program: preset.presetNum, bank: preset.bank, isDrum, zones });
     }
 
-    return { sampleData, sampleHeaders, programSamples, instruments, instrumentSamples, sampleMeta };
+    return { samples, instruments: instrumentSamples, presets, sampleData };
 }
 export { timecentsToSeconds, centibelsToGain };
 export const decodeSF2Sample = _decodeSF2Sample;
