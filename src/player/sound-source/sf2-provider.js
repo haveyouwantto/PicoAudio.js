@@ -10,7 +10,7 @@
  *   const info = getSF2Sample(0, 69, false); // Sync! Returns {buffer, envelope, ...} or null
  */
 
-import { parseSF2, decodeSF2Sample, getProgramEntry, findSample } from "./sf2-parser";
+import { parseSF2, decodeSF2Sample } from "../sf2/parser";
 
 /** Parsed SF2 data (set by loadSF2) */
 let sf2Data = null;
@@ -167,10 +167,24 @@ export function getSF2Sample(program, pitch, isDrum = false, bank = 0) {
 
     let entry = null;
 
+    // Local program lookup (parser returns raw programSamples Map)
+    const localGetProgramEntry = (programSamples, programNum, isDrumFlag, bankNum) => {
+        const keys = [];
+        if (isDrumFlag) {
+            keys.push(`drum_${bankNum}:${programNum}`);
+            keys.push(`drum_${programNum}`);
+        } else {
+            keys.push(`${bankNum}:${programNum}`);
+            keys.push(`${programNum}`);
+        }
+        for (const k of keys) if (programSamples.has(k)) return programSamples.get(k);
+        return null;
+    };
+
     if (isDrum) {
-        entry = getProgramEntry(sf2Data.programSamples, program, true, bank);
+        entry = localGetProgramEntry(sf2Data.programSamples, program, true, bank);
         if (!entry) {
-            // Fallback for drum kits without explicit bank mapping.
+            // Fallback: find any drum entry that covers the key
             for (const [key, e] of sf2Data.programSamples) {
                 if (e.isDrum) {
                     for (const sample of e.samples) {
@@ -184,7 +198,7 @@ export function getSF2Sample(program, pitch, isDrum = false, bank = 0) {
             }
         }
     } else {
-        entry = getProgramEntry(sf2Data.programSamples, program, isDrum, bank);
+        entry = localGetProgramEntry(sf2Data.programSamples, program, false, bank);
     }
 
     if (!entry) return null;
