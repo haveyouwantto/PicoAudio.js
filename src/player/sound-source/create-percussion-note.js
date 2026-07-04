@@ -51,9 +51,9 @@ export default function createPercussionNote(option) {
 
                     const peakGain = velocity * 1.5 //* sf2Gain;
                     gainNode.gain.setValueAtTime(0, attackStart);
-                    gainNode.gain.setTargetAtTime(peakGain, attackStart, attackTime * 0.33);
+                    gainNode.gain.setTargetAtTime(peakGain, Math.min(attackStart, note.stop), attackTime * 0.33);
                     const decayStart = attackStart + attackTime + holdTime;
-                    gainNode.gain.setTargetAtTime(peakGain * sustainLevel, decayStart, decayTime * 0.33);
+                    gainNode.gain.setTargetAtTime(peakGain * sustainLevel, Math.min(decayStart, note.stop), decayTime * 0.33);
 
                     const releaseStart = note.stop;
                     gainNode.gain.setTargetAtTime(0, releaseStart, releaseTime * 0.33);
