@@ -1,7 +1,12 @@
 import { getDrumSample } from "./soundbank";
-import { getSF2Sample, isSF2Loaded } from "./sf2-provider";
+import { renderSF2Note } from "./sf2-renderer";
 
 export default function createPercussionNote(option) {
+    // SF2 SoundFont mode: delegated to sf2-renderer.js (same graph as melodic).
+    if (this.settings.soundQuality == 4) {
+        return renderSF2Note.call(this, { ...option, isDrum: true });
+    }
+
     const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1 || this.settings.soundQuality == 4;
     const note = this.createBaseNote(option, true, false, false, false, needsFilter);
     if (note.isGainValueZero) return null;
@@ -26,45 +31,12 @@ export default function createPercussionNote(option) {
     let stopAudioTime2 = 0;
     switch (this.settings.soundQuality) {
         case 4:
-            // SF2 SoundFont drum sample playback
-            {
-                source.loop = false;
-                gainNode2.gain.value = 0;
-                stopAudioTime2 = 0;
-                const sf2Info = getSF2Sample(option.instrument, option.pitch, true, option.bank || 0, Math.round((option.velocity || 1) * 127));
-                if (sf2Info) {
-                    source.buffer = sf2Info.buffer;
-                    const semitoneOffset = option.pitch - sf2Info.rootKey + (sf2Info.coarseTune || 0)
-                        + (sf2Info.fineTune + sf2Info.correction) / 100;
-                    source.playbackRate.value = Math.pow(2, semitoneOffset / 12);
-                    source.loop = false;
-
-                    // Use SF2 envelope for drum sample playback
-                    const sf2Env = sf2Info.envelope || { delay: 0, attack: 0.001, hold: 0, decay: 0, sustain: 1.0, release: 0.05 };
-                    const sf2Gain = sf2Info.gain != null ? sf2Info.gain : 1;
-                    const attackStart = note.start + (sf2Env.delay || 0);
-                    const attackTime = Math.max(sf2Env.attack || 0, 0.001);
-                    const holdTime = Math.max(sf2Env.hold || 0, 0);
-                    const decayTime = Math.max(sf2Env.decay || 0, 0.001);
-                    const sustainLevel = sf2Env.sustain || 1.0;
-                    const releaseTime = Math.max(sf2Env.release || 0.05, 0.001);
-
-                    const peakGain = velocity * 1.5 //* sf2Gain;
-                    gainNode.gain.setValueAtTime(0, attackStart);
-                    gainNode.gain.setTargetAtTime(peakGain, Math.min(attackStart, note.stop), attackTime * 0.33);
-                    const decayStart = attackStart + attackTime + holdTime;
-                    gainNode.gain.setTargetAtTime(peakGain * sustainLevel, Math.min(decayStart, note.stop), decayTime * 0.33);
-
-                    const releaseStart = note.stop;
-                    gainNode.gain.setTargetAtTime(0, releaseStart, releaseTime * 0.33);
-                    this.stopAudioNode(oscillator, releaseStart + releaseTime, stopGainNode);
-
-                    stopAudioTime = Math.min(4, sf2Info.buffer.duration + releaseTime);
-                } else {
-                    gainNode.gain.value = 0;
-                    stopAudioTime = 0.01;
-                }
-            }
+            // SF2 SoundFont drum playback is handled by the top-level shortcut
+            // (renderSF2Note). This case is a defensive fallback.
+            gainNode.gain.value = 0;
+            gainNode2.gain.value = 0;
+            stopAudioTime = 0.01;
+            stopAudioTime2 = 0;
             break;
         case 3:
             gainNode.gain.value = velocity * 1.5;

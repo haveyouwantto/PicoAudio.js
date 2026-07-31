@@ -1,0 +1,455 @@
+/**
+ * SF2 Renderer (player/sound-source/sf2-renderer.js)
+ *
+ * Handles all SoundFont 2 playback rendering:
+ *  - zone/layer resolution (velocity & key layers, stereo pairs, multiple zones)
+ *  - per-layer audio graph: bufferSource -> (filter) -> layerGain -> panner -> stopGain
+ *  - sample-accurate loop points, playback rate (incl. scale tuning)
+ *  - volume & modulation ADSR envelope scheduling
+ *  - vibrato LFO, modulation LFO & modulation-envelope -> pitch/filter
+ *  - initial filter cutoff & Q
+ *
+ * This module is the single place where SF2-specific rendering happens;
+ * createNote/createPercussionNote delegate here for soundQuality=4.
+ */
+
+import { getSF2Layers, panToPosition } from "./sf2-provider";
+
+// Envelope curve sample count for setValueCurveAtTime
+const ENV_CURVE_SAMPLES = 64;
+
+/**
+ * Compute the playback rate multiplier for a given layer & target pitch.
+ * Handles root key, coarse/fine tune, sample correction and scale tuning.
+ */
+function computePlaybackRate(pitch, layer) {
+    const rootKey = layer.rootKey != null ? layer.rootKey : 60;
+    const coarse = layer.coarseTune || 0;
+    const fine = layer.fineTune || 0;
+    const correction = layer.correction || 0;
+    const scaleTuning = layer.scaleTuning != null ? layer.scaleTuning : 100;
+
+    // SF2: tuning is specified in cents relative to the recorded root key.
+    // scaleTuning (100 = normal chromatic) scales the per-semitone spacing.
+    const centsFromRoot = (pitch - rootKey) * scaleTuning;
+    const totalCents = centsFromRoot + coarse * 100 + fine + correction;
+    return Math.pow(2, totalCents / 1200);
+}
+
+/**
+ * Build a Float32Array curve (0..1 envelope level) for the mod-envelope
+ * automated sections (pitch/filter). Release section is dropped; callers
+ * schedule release with a separate ramp.
+ */
+function buildEnvelopeCurve(env, duration, peak = 1, samples = ENV_CURVE_SAMPLES) {
+    const curve = new Float32Array(samples);
+    if (!env || duration <= 0) {
+        curve.fill(peak);
+        return curve;
+    }
+
+    const delay = Math.max(0, env.delay || 0);
+    const attack = Math.max(0.001, env.attack || 0.001);
+    const hold = Math.max(0, env.hold || 0);
+    const decay = Math.max(0.001, env.decay || 0.001);
+    const sustain = env.sustain != null ? env.sustain : 1.0;
+
+    const attackEnd = delay + attack;
+    const sustainStart = attackEnd + hold + decay;
+
+    for (let i = 0; i < samples; i++) {
+        const t = (i / samples) * duration;
+        let level;
+        if (t < delay) {
+            level = 0;
+        } else if (t < attackEnd) {
+            const p = (t - delay) / attack;
+            level = peak * (1 - Math.exp(-4 * p));
+        } else if (t < sustainStart) {
+            const p = (t - attackEnd) / decay;
+            level = sustain + (peak - sustain) * Math.exp(-4 * p);
+        } else {
+            level = sustain;
+        }
+        curve[i] = level;
+    }
+    curve[samples - 1] = sustain;
+    return curve;
+}
+
+/**
+ * Render a complete SF2 note (one or more layers) into the audio graph.
+ * Must be called with `this` = PicoAudio instance:
+ *   renderSF2Note.call(this, option) -> () => void (stop function) | null
+ */
+export function renderSF2Note(option) {
+    const context = this.context;
+    const songStartTime = this.states && this.states.startTime ? this.states.startTime : 0;
+    const baseLatency = this.baseLatency || 0;
+
+    const start = option.startTime + songStartTime + baseLatency;
+    const stop = option.stopTime + songStartTime + baseLatency;
+    const isDrum = option.isDrum === true || option.channel === 9;
+
+    const velocity = Math.round((option.velocity || 1) * 127);
+
+    // Resolve all matched SF2 layers (multi-zone / velocity-layer support)
+    const layers = getSF2Layers(option.instrument, option.pitch, velocity, isDrum, option.bank || 0);
+    if (!layers || layers.length === 0) return null;
+
+    // Shared stop gain: every layer feeds into this, giving one universal mute.
+    const stopGainNode = context.createGain();
+    stopGainNode.gain.value = 1;
+    if (this.masterGainNode) {
+        stopGainNode.connect(this.masterGainNode);
+    } else if (context.destination) {
+        stopGainNode.connect(context.destination);
+    }
+
+    const cleanupFuncs = [];
+
+    const registerCleanup = (fn) => {
+        cleanupFuncs.push(fn);
+        if (this.pushFunc) {
+            this.pushFunc({
+                sf2Layer: fn,
+                stopFunc: () => { if (typeof fn === 'function') fn(); }
+            });
+        }
+    };
+
+    const safeStopAudioNode = (node, time) => {
+        try {
+            this.stopAudioNode && this.stopAudioNode(node, time);
+        } catch (e) {
+            // ignore
+        }
+    };
+
+    let startedAny = false;
+    for (const layer of layers) {
+        const ok = buildLayer({
+            context,
+            layer,
+            start,
+            stop,
+            velocity,
+            option,
+            songStartTime,
+            baseLatency,
+            stopGainNode,
+            registerCleanup,
+            safeStopAudioNode,
+        });
+        if (ok) startedAny = true;
+    }
+
+    if (!startedAny) {
+        try { stopGainNode.disconnect(); } catch (e) { /* noop */ }
+        return null;
+    }
+
+    // Return a universal stop function (also used by createNote's cleanup)
+    return () => {
+        for (const fn of cleanupFuncs) {
+            try { fn(); } catch (e) { /* noop */ }
+        }
+        try { stopGainNode.gain.setValueAtTime(0, this.context.currentTime); } catch (e) { /* noop */ }
+    };
+}
+
+/**
+ * Build the audio graph for a single layer.
+ * Returns true on success, false if the layer could not start.
+ */
+function buildLayer({
+    context,
+    layer,
+    start,
+    stop,
+    velocity,
+    option,
+    songStartTime,
+    baseLatency,
+    stopGainNode,
+    registerCleanup,
+    safeStopAudioNode,
+}) {
+    const buffer = layer.buffer;
+    if (!buffer) return false;
+
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+
+    // --- playback rate (root key + tune + scale) ---
+    const rate = computePlaybackRate(option.pitch, layer);
+    source.playbackRate.value = rate;
+
+    // --- sample offset (startAddrs*Offset), relative to buffer start ---
+    const headerStart = layer.headerStart || 0;
+    const sampleStartFrames = layer.sampleStart != null ? layer.sampleStart : headerStart;
+    const offsetFrames = Math.max(0, sampleStartFrames - headerStart);
+    const offsetSec = offsetFrames / layer.originalSampleRate;
+    const maxOffset = Math.max(0, buffer.duration - 0.001);
+    const startOffsetSec = Math.min(offsetSec, maxOffset);
+
+    // --- loop points (absolute frame -> buffer-relative seconds) ---
+    const loopStartSec = Math.max(0, (layer.startLoop - headerStart) / layer.originalSampleRate);
+    const loopEndRaw = (layer.endLoop - headerStart) / layer.originalSampleRate;
+    const loopEndSec = Math.min(Math.max(loopStartSec + 0.001, loopEndRaw), buffer.duration);
+
+    const loopMode = layer.loopMode || 0;
+    switch (loopMode) {
+        case 1: // continuous loop
+        case 2: // loop until release (approximated as continuous)
+            source.loop = true;
+            source.loopStart = loopStartSec;
+            source.loopEnd = loopEndSec;
+            break;
+        default:
+            // loopMode 0 (no loop) & 3 (release loop) — play through once
+            source.loop = false;
+            break;
+    }
+
+    // --- pitch bend: schedule playbackRate changes ---
+    if (option.pitchBend && option.pitchBend.length) {
+        option.pitchBend.forEach((p) => {
+            const t = Math.max(0, p.time + songStartTime + baseLatency);
+            source.playbackRate.setValueAtTime(
+                rate * Math.pow(2, p.value / 12),
+                t
+            );
+        });
+    }
+
+    // --- per-layer gain (velocity + SF2 attenuation) ---
+    const layerGain = context.createGain();
+    const sf2Gain = layer.gain != null ? layer.gain : 1;
+    // Velocity response: mild curve so soft notes are softer without clipping.
+    const velNorm = velocity / 127;
+    const velGain = 0.25 + 0.75 * (velNorm * velNorm);
+    layerGain.gain.value = sf2Gain * velGain;
+
+    // --- filter ---
+    let filter = null;
+    const filterFc = layer.filterFc != null ? layer.filterFc : 20000;
+    if (filterFc < 20000 && filterFc > 20) {
+        filter = context.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = Math.min(filterFc, context.sampleRate * 0.45);
+        filter.Q.value = layer.filterQ != null ? layer.filterQ : 0.7071;
+    }
+
+    // --- pan ---
+    const panPos = panToPosition(layer.pan != null ? layer.pan : 64);
+    let panner = null;
+    let hasPanner = false;
+    if (context.createStereoPanner) {
+        panner = context.createStereoPanner();
+        panner.pan.value = panPos;
+        hasPanner = true;
+    } else if (context.createPanner) {
+        panner = context.createPanner();
+        panner.panningModel = 'equalpower';
+        const panAngle = Math.max(-1, Math.min(1, panPos)) * 90;
+        try {
+            if (panner.positionX) {
+                panner.positionX.setValueAtTime(Math.sin(panAngle * Math.PI / 180), context.currentTime);
+                panner.positionY.setValueAtTime(0, context.currentTime);
+                panner.positionZ.setValueAtTime(-Math.cos(panAngle * Math.PI / 180), context.currentTime);
+            } else {
+                panner.setPosition(Math.sin(panAngle * Math.PI / 180), 0, -Math.cos(panAngle * Math.PI / 180));
+            }
+        } catch (e) { /* noop */ }
+        hasPanner = true;
+    }
+
+    // --- audio graph assembly ---
+    if (filter) {
+        source.connect(filter);
+        filter.connect(layerGain);
+    } else {
+        source.connect(layerGain);
+    }
+    if (hasPanner) {
+        layerGain.connect(panner);
+        panner.connect(stopGainNode);
+    } else {
+        layerGain.connect(stopGainNode);
+    }
+
+    // --- vibrato LFO -> detune ---
+    const vib = layer.vibLFO || {};
+    const vibAmount = vib.toPitchCents || 0;
+    if (vibAmount !== 0) {
+        const vibOsc = context.createOscillator();
+        const vibGain = context.createGain();
+        vibOsc.type = 'sine';
+        vibOsc.frequency.value = vib.freqHz || 5;
+        vibGain.gain.value = vibAmount; // cents
+        vibOsc.connect(vibGain);
+        vibGain.connect(source.detune);
+
+        const vibStart = start + (vib.delay || 0);
+        vibOsc.start(Math.max(start, vibStart));
+        safeStopAudioNode(vibOsc, stop + 0.05);
+
+        registerCleanup(() => {
+            try { vibOsc.stop(0); vibOsc.disconnect(); } catch (e) { /* noop */ }
+        });
+    }
+
+    // --- modulation LFO (pitch / filter / volume) ---
+    const mod = layer.modLFO || {};
+    const modPitch = mod.toPitchCents || 0;
+    const modFilter = mod.toFilterFcCents || 0;
+    const modVol = mod.toVolumeGain || 0;
+    if (modPitch !== 0 || modFilter !== 0 || (modVol !== 0 && modVol !== 1)) {
+        const modOsc = context.createOscillator();
+        modOsc.type = 'sine';
+        modOsc.frequency.value = mod.freqHz || 5;
+        const modStart = start + (mod.delay || 0);
+
+        let hasDestination = false;
+        if (modPitch !== 0) {
+            const g = context.createGain();
+            g.gain.value = modPitch; // cents
+            modOsc.connect(g);
+            g.connect(source.detune);
+            hasDestination = true;
+        }
+        if (modFilter !== 0 && filter) {
+            const g = context.createGain();
+            // Approximate cents modulation on the cutoff: the filter.frequency
+            // AudioParam accepts Hz. We derive a per-cents Hz scale at current
+            // cutoff: dHz = fc * (2^(cents/1200) - 1), computed around the
+            // center. This keeps the LFO mod roughly centered.
+            const baseFc = filter.frequency.value;
+            const centsToHz = baseFc * (Math.pow(2, Math.abs(modFilter) / 1200) - 1);
+            g.gain.value = centsToHz;
+            modOsc.connect(g);
+            g.connect(filter.frequency);
+            hasDestination = true;
+        }
+        if (modVol !== 0 && modVol !== 1) {
+            const g = context.createGain();
+            // Mod LFO volume is tiny in most fonts; apply a gentle ±scale.
+            g.gain.value = 0.5 * (modVol - 1);
+            modOsc.connect(g);
+            g.connect(layerGain.gain);
+            hasDestination = true;
+        }
+        if (hasDestination) {
+            modOsc.start(Math.max(start, modStart));
+            safeStopAudioNode(modOsc, stop + 0.05);
+            registerCleanup(() => {
+                try { modOsc.stop(0); modOsc.disconnect(); } catch (e) { /* noop */ }
+            });
+        }
+    }
+
+    // --- modulation envelope -> pitch & filter ---
+    const modEnv = layer.modEnv || {};
+    const pitchModAmount = layer.pitchModEnvAmount || 0;
+    const filterModAmount = layer.filterEnvAmount || 0;
+
+    let hasModEnvAutomation = false;
+    if (modEnv.attack > 0 || modEnv.decay > 0 || modEnv.sustain < 1.0) hasModEnvAutomation = true;
+
+    if (hasModEnvAutomation && (pitchModAmount !== 0 || filterModAmount !== 0)) {
+        // Envelope curve duration: from note start until release (cap a few seconds).
+        const envDuration = Math.max(0.1, Math.min((stop - start) * 0.25 + 0.25, 2.0));
+
+        if (pitchModAmount !== 0) {
+            const curve = buildEnvelopeCurve(modEnv, envDuration, pitchModAmount);
+            try {
+                source.detune.setValueCurveAtTime(curve, start, envDuration);
+            } catch (e) { /* noop */ }
+        }
+        if (filterModAmount !== 0 && filter) {
+            const baseFc = filter.frequency.value;
+            const curve = buildEnvelopeCurve(modEnv, envDuration, 1);
+            const fcCurve = new Float32Array(curve.length);
+            for (let i = 0; i < curve.length; i++) {
+                fcCurve[i] = baseFc * Math.pow(2, (curve[i] * filterModAmount) / 1200);
+            }
+            try {
+                filter.frequency.setValueCurveAtTime(fcCurve, start, envDuration);
+            } catch (e) { /* noop */ }
+        }
+    }
+
+    // --- volume envelope (ADSR) scheduling ---
+    const env = layer.envelope || {};
+    scheduleVolumeEnvelope({
+        gainNode: layerGain,
+        env,
+        start,
+        stop,
+        peak: 1,
+    });
+
+    // --- start the source ---
+    try {
+        source.start(start, startOffsetSec);
+    } catch (e) {
+        try {
+            source.start(start);
+        } catch (e2) {
+            console.warn('SF2: failed to start source', e2);
+            try { source.disconnect(); } catch (e3) { /* noop */ }
+            return false;
+        }
+    }
+
+    // Stop the source after the note ends (release time accounted below).
+    const releaseTime = Math.max(0, env.release || 0);
+    const stopSourceTime = stop + Math.min(releaseTime, 1.0);
+    safeStopAudioNode(source, stopSourceTime);
+
+    return true;
+}
+
+/**
+ * Schedule a 6-stage volume envelope on an AudioParam using setTargetAtTime
+ * approximations (exponential approach), staying within note start/stop.
+ */
+function scheduleVolumeEnvelope({ gainNode, env, start, stop, peak }) {
+    const delay = Math.max(0, env.delay || 0);
+    const attack = Math.max(0.001, env.attack || 0.001);
+    const hold = Math.max(0, env.hold || 0);
+    const decay = Math.max(0.001, env.decay || 0.001);
+    const sustain = env.sustain != null ? env.sustain : 1.0;
+    const release = Math.max(0.001, env.release || 0.001);
+
+    const attackStart = start + delay;
+    const attackEnd = Math.min(attackStart + attack, stop);
+    const decayStart = Math.min(attackEnd + hold, stop);
+    const releaseStart = Math.max(stop, attackStart);
+
+    const param = gainNode.gain;
+
+    param.cancelScheduledValues(0);
+    try {
+        param.setValueAtTime(0, attackStart);
+    } catch (e) { /* noop */ }
+    // Attack
+    if (attackStart < stop) {
+        param.setTargetAtTime(peak, attackStart, attack * 0.25);
+    }
+    // Hold at peak after attack completes
+    if (attackEnd < decayStart) {
+        try {
+            param.setValueAtTime(peak, attackEnd);
+        } catch (e) { /* noop */ }
+    }
+    // Decay -> sustain
+    if (decayStart < stop) {
+        param.setTargetAtTime(peak * sustain, decayStart, decay * 0.25);
+    }
+    // Release (note-off)
+    param.setTargetAtTime(0, releaseStart, release * 0.25);
+}
+
+export default { renderSF2Note };

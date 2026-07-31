@@ -1,16 +1,20 @@
 /**
  * SF2 Sample Provider
- * 
+ *
  * Provides sample-based audio playback from SoundFont 2 (.sf2) files.
  * All samples are pre-decoded into AudioBuffers at load time for synchronous access.
- * 
+ * Rendering decisions (zone selection, envelope scheduling, filters, LFOs) live in
+ * sf2-renderer.js — this module only resolves samples & merged generator parameters.
+ *
  * Usage:
  *   import { loadSF2, getSF2Sample, isSF2Loaded } from './sf2-provider';
  *   const ok = loadSF2(ctx, arrayBuffer);   // Pre-decode all samples
- *   const info = getSF2Sample(0, 69, false); // Sync! Returns {buffer, envelope, ...} or null
+ *   const layers = getSF2Layers(0, 69, 100, false); // Sync! Returns [{buffer, envelope, pan, ...}] or []
  */
 
-import { parseSF2, decodeSF2Sample } from "../sf2/parser";
+import { parseSF2, decodeSF2Sample } from "../sf2/parser.js";
+import { buildPresetZones } from "../sf2/builder.js";
+import { SF2Gen, SF2SampleType } from "../sf2/constants.js";
 
 /** Parsed SF2 data (set by loadSF2) */
 let sf2Data = null;
@@ -27,40 +31,15 @@ const sf2BufferCache = [];
 export function loadSF2(ctx, arrayBuffer) {
     try {
         const parsed = parseSF2(arrayBuffer);
-        console.log('SF2 parsed successfully:', parsed);
 
-        const { samples: sampleHeaders, instruments: instrumentSamples, sampleData, presets } = parsed;
+        const { samples: sampleHeaders, instruments: instrumentSamples, sampleData } = parsed;
 
-        // Build programSamples map from presets (zone -> instrument -> samples)
-        const programSamples = new Map();
-        for (const preset of presets) {
-            const key = preset.isDrum ? `drum_${preset.bank}:${preset.program}` : `${preset.bank}:${preset.program}`;
-            if (!programSamples.has(key)) {
-                programSamples.set(key, { name: preset.name, program: preset.program, bank: preset.bank, isDrum: preset.isDrum, samples: [] });
-            }
-            const entry = programSamples.get(key);
-            for (const zone of preset.zones) {
-                const instIdx = zone.instrumentIndex;
-                if (instIdx >= 0 && instIdx < instrumentSamples.length) {
-                    entry.samples.push(...instrumentSamples[instIdx].samples);
-                }
-            }
-        }
+        // Build fully-resolved preset zones (preset zone + instrument global + instrument zone merged)
+        const presetZones = buildPresetZones(parsed.presets, parsed.presetBags || [], parsed.presetGens || [], instrumentSamples, sampleHeaders);
 
-        // sampleMeta: per-sampleId lookup for pan and instrument index (for stereo pairing and merging)
-        const sampleMeta = {};
-        for (let instIdx = 0; instIdx < instrumentSamples.length; instIdx++) {
-            const inst = instrumentSamples[instIdx];
-            if (!inst || !inst.samples) continue;
-            for (const s of inst.samples) {
-                if (s && typeof s.sampleId === 'number') {
-                    const genPan = (s.generators && s.generators.pan != null) ? s.generators.pan : 64;
-                    sampleMeta[s.sampleId] = { pan: genPan, instrumentIndex: instIdx };
-                }
-            }
-        }
-        sf2Data = { ...parsed, programSamples, sampleMeta };
-        console.log('SF2 parsed successfully:', sf2Data);
+        // Keep the raw bag/gen arrays for buildPresetZones consumers & diagnostics
+        sf2Data = { ...parsed, presetZones };
+        console.log('SF2 parsed successfully:', { samples: sampleHeaders.length, presets: parsed.presets.length, zones: presetZones.reduce((n, p) => n + p.zones.length, 0) });
 
         // Clear any previous cache
         sf2BufferCache.length = 0;
@@ -83,54 +62,28 @@ export function loadSF2(ctx, arrayBuffer) {
 
             if (paired.has(i)) continue;
 
-            const meta = sampleMeta[i];
             let audioBuffer = null;
 
-            // Stereo pairing: find partner sample in same instrument with opposite pan
-            if (meta && meta.instrumentIndex != null) {
-                const inst = instrumentSamples[meta.instrumentIndex];
-                if (inst && inst.samples) {
-                    const thisPan = meta.pan != null ? meta.pan : 64;
-                    const wantLeft = thisPan < 64;
-                    let partner = null;
-                    for (const cand of inst.samples) {
-                        if (cand.sampleId === i) continue;
-                        const candPan = cand.generators && cand.generators.pan != null ? cand.generators.pan : 64;
-                        if (wantLeft && candPan > 64) partner = cand;
-                        else if (!wantLeft && candPan < 64) partner = cand;
-                        else continue;
+            // Stereo pairing: find partner sample that shares the left/right link bits
+            const linkedIdx = findStereoPartner(shdr, sampleHeaders, paired);
+            if (linkedIdx != null) {
+                const linkedHdr = sampleHeaders[linkedIdx];
+                if (linkedHdr && linkedHdr.sampleRate === shdr.sampleRate) {
+                    const floatSamples2 = decodeSF2Sample(sampleData, linkedHdr.start, linkedHdr.end);
+                    const outLen = Math.max(floatSamples.length, floatSamples2.length);
+                    audioBuffer = ctx.createBuffer(2, outLen, shdr.sampleRate);
 
-                        const linkedHdr = sampleHeaders[partner.sampleId];
-                        if (!linkedHdr || linkedHdr.sampleRate !== shdr.sampleRate) { partner = null; continue; }
-                        const len1 = shdr.end - shdr.start;
-                        const len2 = linkedHdr.end - linkedHdr.start;
-                        const maxDiff = Math.max(128, Math.floor(len1 * 0.1));
-                        if (Math.abs(len1 - len2) > maxDiff) { partner = null; continue; }
-                        // key/vel range overlap check
-                        const zo = cand.generators || {};
-                        const zc = inst.samples.find(s => s.sampleId === i);
-                        const zg = zc ? zc.generators : {};
-                        const zkr = zg.keyRange || [0, 127];
-                        const zvr = zg.velRange || [0, 127];
-                        const okr = zo.keyRange || [0, 127];
-                        const ovr = zo.velRange || [0, 127];
-                        if (zkr[1] < okr[0] || zkr[0] > okr[1]) { partner = null; continue; }
-                        if (zvr[1] < ovr[0] || zvr[0] > ovr[1]) { partner = null; continue; }
-                        break;
-                    }
-                    if (partner) {
-                        const linkedHdr = sampleHeaders[partner.sampleId];
-                        const floatSamples2 = decodeSF2Sample(sampleData, linkedHdr.start, linkedHdr.end);
-                        const outLen = Math.max(floatSamples.length, floatSamples2.length);
-                        audioBuffer = ctx.createBuffer(2, outLen, shdr.sampleRate);
-                        audioBuffer.getChannelData(0).set(floatSamples);
-                        audioBuffer.getChannelData(1).set(floatSamples2);
-                        sf2BufferCache[i] = audioBuffer;
-                        sf2BufferCache[partner.sampleId] = audioBuffer;
-                        paired.add(i);
-                        paired.add(partner.sampleId);
-                        continue;
-                    }
+                    // Determine which channel each side occupies
+                    const isLeft = (shdr.sampleType & (SF2SampleType.leftSample | SF2SampleType.romLeftSample)) !== 0;
+                    const isRight = (shdr.sampleType & (SF2SampleType.rightSample | SF2SampleType.romRightSample)) !== 0;
+                    const thisIsLeft = !isRight; // default left unless explicitly right
+                    audioBuffer.getChannelData(thisIsLeft ? 0 : 1).set(floatSamples);
+                    audioBuffer.getChannelData(thisIsLeft ? 1 : 0).set(floatSamples2);
+                    sf2BufferCache[i] = audioBuffer;
+                    sf2BufferCache[linkedIdx] = audioBuffer;
+                    paired.add(i);
+                    paired.add(linkedIdx);
+                    continue;
                 }
             }
 
@@ -140,7 +93,7 @@ export function loadSF2(ctx, arrayBuffer) {
             sf2BufferCache[i] = audioBuffer;
         }
 
-        console.log(`SF2 loaded: ${sampleHeaders.length} samples decoded, ${programSamples.size} programs`);
+        console.log(`SF2 loaded: ${sampleHeaders.length} samples decoded, ${presetZones.length} presets`);
         return true;
     } catch (e) {
         console.error('Failed to parse SF2:', e);
@@ -148,6 +101,23 @@ export function loadSF2(ctx, arrayBuffer) {
         sf2BufferCache.length = 0;
         return false;
     }
+}
+
+/**
+ * Find the stereo partner of a sample header via the sampleLink / sampleType flags.
+ * @returns {number|null} linked sample index, or null
+ */
+function findStereoPartner(shdr, sampleHeaders, paired) {
+    if (paired.has(shdr.sampleLink)) return null;
+    if (shdr.start === 0 && shdr.end === 0) return null; // terminal record
+    const flags = shdr.sampleType & 0x7fff; // strip ROM bit
+    const isLeft = (flags & SF2SampleType.leftSample) !== 0;
+    const isRight = (flags & SF2SampleType.rightSample) !== 0;
+    if (!isLeft && !isRight) return null;
+    if (shdr.sampleLink >= 0 && shdr.sampleLink < sampleHeaders.length) {
+        return shdr.sampleLink;
+    }
+    return null;
 }
 
 /**
@@ -164,101 +134,247 @@ export function isSF2Loaded() {
     return sf2Data !== null;
 }
 
-/** Resolve the global generators for a sample via its instrument. */
-function resolveInstrumentGenerators(sampleId) {
-    const meta = sf2Data.sampleMeta && sf2Data.sampleMeta[sampleId];
-    if (!meta || meta.instrumentIndex == null) return null;
-    const inst = sf2Data.instruments[meta.instrumentIndex];
-    return inst ? inst.generators : null;
+/**
+ * Helper: convert a legacy 0..127 pan value to -1..1 StereoPanner position.
+ * SF2 spec pan is 0..1000 (500 = center); both are handled.
+ */
+export function panToPosition(pan) {
+    if (pan == null) return 0;
+    let p = pan;
+    if (p > 127) p = (p / 1000) * 127; // normalize SF2 0..1000 → 0..127
+    return (p / 127) * 2 - 1; // 0..127 → -1..1
 }
 
 /**
- * Retrieve an AudioBuffer + metadata for a given MIDI program & pitch.
- * This is a SYNCHRONOUS call — all samples were pre-decoded at load time.
+ * Resolve the rendered layers for a given MIDI program & pitch & velocity.
+ *
+ * Returns an array of fully-resolved layer objects (typically 1, but a preset
+ * may layer several zones across a key, e.g. stereo pairs or velocity layers):
+ *   {
+ *     buffer,           // AudioBuffer (mono or pre-paired stereo)
+ *     rootKey,          // MIDI key the sample was recorded at
+ *     correction,       // cents tuning from sample header
+ *     coarseTune,       // semitones
+ *     fineTune,         // cents
+ *     scaleTuning,      // cents per key (default 100 → normal chromatic)
+ *     startLoop,        // loop start (sample frames, absolute)
+ *     endLoop,          // loop end (sample frames, absolute)
+ *     loopMode,         // 0=no loop, 1=continuous, 2=loop until release, 3=release loop
+ *     originalSampleRate,
+ *     gain,             // initial attenuation as linear gain multiplier
+ *     envelope,         // volume envelope {delay,attack,hold,decay,sustain,release}
+ *     modEnv,           // modulation envelope {delay,attack,hold,decay,sustain,release}
+ *     pitchModEnvAmount,   // cents of pitch modulation from mod env (gen 7)
+ *     filterFc,         // Hz (initial filter cutoff)
+ *     filterQ,          // linear Q
+ *     filterEnvAmount,  // cents of cutoff modulation from mod env (gen 11)
+ *     vibLFO,           // {delay, freqHz, toPitchCents}
+ *     modLFO,           // {delay, freqHz, toPitchCents, toFilterFcCents, toVolumeGain}
+ *     pan,              // legacy 0..127
+ *     pan1000,          // SF2 0..1000
+ *     exclusiveClass,
+ *     keyRange, velRange,
+ *     sampleName, instrumentName
+ *   }
+ *
+ * @param {number} program - MIDI program number
+ * @param {number} pitch - MIDI note number
+ * @param {number} velocity - MIDI velocity 0..127
+ * @param {boolean} isDrum
+ * @param {number} bank
+ * @returns {Array<Object>} resolved layers (zero-length if no match)
  */
-export function getSF2Sample(program, pitch, isDrum = false, bank = 0) {
-    if (!sf2Data) return null;
+export function getSF2Layers(program, pitch, velocity = 100, isDrum = false, bank = 0) {
+    if (!sf2Data) return [];
 
-    const { programSamples, samples: sampleHeaders } = sf2Data;
+    const { presetZones, samples: sampleHeaders } = sf2Data;
 
-    let entry = null;
-    const localGetProgramEntry = (ps, prog, drum, bn) => {
-        const keys = drum
-            ? [`drum_${bn}:${prog}`, `drum_${prog}`]
-            : [`${bn}:${prog}`, `${prog}`];
-        for (const k of keys) if (ps.has(k)) return ps.get(k);
-        return null;
-    };
-
-    if (isDrum) {
-        entry = localGetProgramEntry(programSamples, program, true, bank);
-        if (!entry) {
-            for (const [key, e] of programSamples) {
-                if (!e.isDrum) continue;
-                for (const sample of e.samples) {
-                    const kr = sample.generators && sample.generators.keyRange;
-                    if (kr && pitch >= kr[0] && pitch <= kr[1]) { entry = e; break; }
+    // Find matching presets (drum bank 120+ or explicit drum flag)
+    let matchedPresets = [];
+    for (const pz of presetZones) {
+        const presetIsDrum = pz.isDrum || pz.bank >= 120;
+        if (isDrum !== presetIsDrum) continue;
+        if (pz.bank === bank && pz.program === program) {
+            matchedPresets.push(pz);
+        }
+    }
+    // Fallback: plain program match ignoring bank (for non-drum)
+    if (matchedPresets.length === 0 && !isDrum) {
+        for (const pz of presetZones) {
+            if (pz.isDrum || pz.bank >= 120) continue;
+            if (pz.program === program) matchedPresets.push(pz);
+        }
+    }
+    // Drum fallback: any drum preset whose keyRange covers pitch
+    if (matchedPresets.length === 0 && isDrum) {
+        for (const pz of presetZones) {
+            if (!pz.isDrum && pz.bank < 120) continue;
+            for (const z of pz.zones) {
+                if (z.keyRange && pitch >= z.keyRange[0] && pitch <= z.keyRange[1]) {
+                    matchedPresets.push(pz);
+                    break;
                 }
-                if (entry) break;
             }
         }
-    } else {
-        entry = localGetProgramEntry(programSamples, program, false, bank);
     }
+    if (matchedPresets.length === 0) return [];
 
-    if (!entry) return null;
+    const layers = [];
+    for (const pz of matchedPresets) {
+        for (const zone of pz.zones) {
+            const g = zone.generators || {};
 
-    // Find the sample whose key range covers the requested pitch
-    let bestSample = null;
-    for (const sample of entry.samples) {
-        const kr = sample.generators && sample.generators.keyRange;
-        if (kr && pitch >= kr[0] && pitch <= kr[1]) { bestSample = sample; break; }
+            // key/vel range matching
+            const kr = zone.keyRange || g.keyRange || [0, 127];
+            if (pitch < kr[0] || pitch > kr[1]) continue;
+            const vr = zone.velRange || g.velRange || [0, 127];
+            if (velocity < vr[0] || velocity > vr[1]) continue;
+
+            const sampleId = zone.sampleId;
+            if (sampleId == null || sampleId < 0 || sampleId >= sampleHeaders.length) continue;
+            const shdr = sampleHeaders[sampleId];
+            if (!shdr || shdr.sampleRate === 0) continue;
+
+            const buffer = sf2BufferCache[sampleId];
+            if (!buffer) continue;
+
+            const layer = resolveLayerParameters(zone, shdr, sampleId, pz, buffer);
+            if (layer) layers.push(layer);
+        }
     }
-    if (!bestSample) bestSample = entry.samples[0];
-    if (!bestSample) return null;
+    return layers;
+}
 
-    const buffer = sf2BufferCache[bestSample.sampleId];
-    if (!buffer) return null;
+/**
+ * Resolve the full parameter set for a single matched zone.
+ */
+function resolveLayerParameters(zone, shdr, sampleId, preset, buffer) {
+    const g = zone.generators || {};
 
-    // Merge: instrument-level globals first, then zone-level generators (zone overrides global)
-    const merged = {};
-    const globals = resolveInstrumentGenerators(bestSample.sampleId);
-    if (globals) Object.assign(merged, globals);
-    if (bestSample.generators) Object.assign(merged, bestSample.generators);
+    // Sample address offsets (sample frames), applied to the header boundaries
+    const startOffset = (g.startAddrsCoarseOffset || 0) * 32768 + (g.startAddrsOffset || 0);
+    const endOffset = (g.endAddrsCoarseOffset || 0) * 32768 + (g.endAddrsOffset || 0);
+    const startLoopOffset = (g.startLoopAddrsCoarseOffset || 0) * 32768 + (g.startLoopAddrsOffset || 0);
+    const endLoopOffset = (g.endLoopAddrsCoarseOffset || 0) * 32768 + (g.endLoopAddrsOffset || 0);
 
-    const shdr = sampleHeaders[bestSample.sampleId];
-    if (!shdr) return null;
+    const sampleStart = Math.max(0, shdr.start + startOffset);
+    const sampleEndRaw = Math.max(sampleStart + 1, shdr.end + endOffset);
+    // Limit loop points into valid sample range
+    const loopStart = Math.min(Math.max(sampleStart, shdr.startLoop + startLoopOffset), sampleEndRaw - 1);
+    const loopEndRaw = shdr.endLoop + endLoopOffset;
+    const loopEnd = Math.min(Math.max(loopStart + 1, loopEndRaw), sampleEndRaw);
 
-    // Loop offsets in sample frames
-    const sampleStart = shdr.start;
-    const loopStartFrames = Math.max(0, shdr.startLoop - sampleStart);
-    const loopEndFrames = Math.max(loopStartFrames + 1, shdr.endLoop - sampleStart);
+    // Root key & tuning
+    const rootKey = (g.rootKey != null && g.rootKey > 0) ? g.rootKey : shdr.originalKey;
+    const correction = shdr.correction || 0;
 
-    const gain = merged.initialAttenuation_gain != null ? merged.initialAttenuation_gain : 1;
-    const envelope = {
-        delay:   merged.delayVolEnv != null   ? merged.delayVolEnv   : 0,
-        attack:  merged.attackVolEnv != null  ? merged.attackVolEnv  : 0.001,
-        hold:    merged.holdVolEnv != null    ? merged.holdVolEnv    : 0,
-        decay:   merged.decayVolEnv != null   ? merged.decayVolEnv   : 0,
-        sustain: merged.sustainVolEnv != null ? merged.sustainVolEnv : 1.0,
-        release: merged.releaseVolEnv != null ? merged.releaseVolEnv : 0.01,
+    // Volume envelope with keynum-based time correction (gen 39/40)
+    // keyNumToVolEnvHold/Decay are timecents per keynum relative to middle C (60).
+    const keyNumDiff = rootKey - 60;
+    const env = {
+        delay:   g.delayVolEnv   != null ? g.delayVolEnv   : 0,
+        attack:  g.attackVolEnv  != null ? g.attackVolEnv  : 0.001,
+        hold:    g.holdVolEnv    != null ? g.holdVolEnv    : 0,
+        decay:   g.decayVolEnv   != null ? g.decayVolEnv   : 0,
+        sustain: g.sustainVolEnv != null ? g.sustainVolEnv : 1.0,
+        release: g.releaseVolEnv != null ? g.releaseVolEnv : 0.01,
     };
-    const pan = merged.pan != null ? merged.pan : 64;
+    // Keynum scaling: timecents per keynum * (root - 60)
+    if (g.keyNumToVolEnvHold != null) {
+        env.hold = Math.max(0, timecentsToSecondsSafe(g.keyNumToVolEnvHold * keyNumDiff));
+    }
+    if (g.keyNumToVolEnvDecay != null) {
+        env.decay = Math.max(0.001, timecentsToSecondsSafe(g.keyNumToVolEnvDecay * keyNumDiff));
+    }
+
+    // Modulation envelope with keynum corrections (gen 31/32)
+    const modEnv = {
+        delay:   g.delayModEnv_seconds   != null ? g.delayModEnv_seconds   : 0,
+        attack:  g.attackModEnv_seconds  != null ? g.attackModEnv_seconds  : 0.001,
+        hold:    g.holdModEnv_seconds    != null ? g.holdModEnv_seconds    : 0,
+        decay:   g.decayModEnv_seconds   != null ? g.decayModEnv_seconds   : 0,
+        sustain: g.sustainModEnv         != null ? g.sustainModEnv         : 1.0,
+        release: g.releaseModEnv_seconds != null ? g.releaseModEnv_seconds : 0.01,
+    };
+    if (g.keyNumToModEnvHold != null) {
+        modEnv.hold = Math.max(0, timecentsToSecondsSafe(g.keyNumToModEnvHold * keyNumDiff));
+    }
+    if (g.keyNumToModEnvDecay != null) {
+        modEnv.decay = Math.max(0.001, timecentsToSecondsSafe(g.keyNumToModEnvDecay * keyNumDiff));
+    }
+
+    // Initial filter (default: no filtering → 20kHz)
+    const filterFc = g.initialFilterFc_hz != null ? g.initialFilterFc_hz : 20000;
+    const filterQ = g.initialFilterQ != null ? g.initialFilterQ : 0.7071;
+
+    // LFOs
+    const vibLFO = {
+        delay: g.delayVibLFO_seconds != null ? g.delayVibLFO_seconds : 0,
+        freqHz: g.freqVibLFO_hz != null ? g.freqVibLFO_hz : 5,
+        toPitchCents: g.vibLFOToPitch_cents != null ? g.vibLFOToPitch_cents : 0,
+    };
+    const modLFO = {
+        delay: g.delayModLFO_seconds != null ? g.delayModLFO_seconds : 0,
+        freqHz: g.freqModLFO_hz != null ? g.freqModLFO_hz : 5,
+        toPitchCents: g.modLFOToPitch_cents != null ? g.modLFOToPitch_cents : 0,
+        toFilterFcCents: g.modLFOToFilterFc_cents != null ? g.modLFOToFilterFc_cents : 0,
+        toVolumeGain: g.modLFOToVolEnv_gain != null ? g.modLFOToVolEnv_gain : 1,
+    };
+
+    // Gain / pan
+    const gain = g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1;
+    const pan = g.pan != null ? g.pan : 64;
+    const pan1000 = g.pan1000 != null ? g.pan1000 : 500;
+
+    const instrumentName = preset && preset.name ? preset.name : '';
+    const sampleName = shdr.name || '';
 
     return {
         buffer,
-        rootKey: merged.rootKey >= 0 ? merged.rootKey : shdr.originalKey,
-        correction: shdr.correction,
-        coarseTune: merged.coarseTune || 0,
-        fineTune: merged.fineTune || 0,
-        startLoop: loopStartFrames,
-        endLoop: loopEndFrames,
-        loopMode: merged.sampleModes != null ? merged.sampleModes : 0,
+        sampleId,
+        headerStart: shdr.start,
+        sampleStart,
+        sampleEnd: sampleEndRaw,
+        rootKey,
+        correction,
+        coarseTune: g.coarseTune || 0,
+        fineTune: g.fineTune || 0,
+        scaleTuning: g.scaleTuning != null ? g.scaleTuning : 100,
+        startLoop: loopStart,
+        endLoop: loopEnd,
+        loopMode: g.sampleModes != null ? g.sampleModes : 0,
         originalSampleRate: shdr.sampleRate,
         gain,
-        envelope,
+        envelope: env,
+        modEnv,
+        pitchModEnvAmount: g.modEnvToPitch_cents != null ? g.modEnvToPitch_cents : 0,
+        filterFc,
+        filterQ,
+        filterEnvAmount: g.modEnvToFilterFc_cents != null ? g.modEnvToFilterFc_cents : 0,
+        vibLFO,
+        modLFO,
         pan,
+        pan1000,
+        exclusiveClass: g.exclusiveClass != null ? g.exclusiveClass : 0,
+        keyRange: zone.keyRange || [0, 127],
+        velRange: zone.velRange || [0, 127],
+        sampleName,
+        instrumentName,
     };
 }
 
-export default { loadSF2, getSF2Sample, isSF2Loaded, getSF2Data };
+function timecentsToSecondsSafe(tc) {
+    if (typeof tc !== 'number' || !isFinite(tc)) return 0;
+    return Math.pow(2, tc / 1200);
+}
+
+/**
+ * Backwards-compatible wrapper: returns the first matching layer or null.
+ * (kept for existing call sites during the renderer migration)
+ */
+export function getSF2Sample(program, pitch, isDrum = false, bank = 0, velocity = 100) {
+    const layers = getSF2Layers(program, pitch, velocity, isDrum, bank);
+    return layers.length > 0 ? layers[0] : null;
+}
+
+export default { loadSF2, getSF2Sample, getSF2Layers, isSF2Loaded, getSF2Data, panToPosition };

@@ -1,9 +1,16 @@
 import InterpolationUtil from "../../util/interpolation-util";
 import { getWave, getWaveTable, quickfadeArray, findClosestNumberIndex, getVolumeMul, WAVETABLE_SIZE } from "./periodic-wave-man";
 import { getSample } from "./soundbank";
-import { getSF2Sample, isSF2Loaded } from "./sf2-provider";
+import { renderSF2Note } from "./sf2-renderer";
 
 export default function createNote(option) {
+    // SF2 SoundFont mode: the renderer builds its own complete audio graph
+    // (zone/layer selection, envelope, filters, LFOs), so we bypass
+    // createBaseNote entirely to avoid creating a bare BufferSource.
+    if (this.settings.soundQuality == 4) {
+        return renderSF2Note.call(this, option);
+    }
+
     const isBuffer = this.settings.soundQuality == 1 || this.settings.soundQuality == 3 || this.settings.soundQuality == 4;
     const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1 || this.settings.soundQuality == 4;
     const note = this.createBaseNote(option, isBuffer, true, false, true, needsFilter); // oscillatorのstopはこちらで実行するよう指定
@@ -161,58 +168,10 @@ export default function createNote(option) {
             break;
 
         case 4: {
-            // SF2 SoundFont sample playback (synchronous — all samples pre-decoded)
-            oscillator.loop = true;
-            const inst = option.instrument;
-            const pitch = option.pitch;
-            const bank = option.bank || 0;
-            const sf2Info = getSF2Sample(inst, pitch, false, bank, option.velocity * 127);
-
-            // Cancel the detune that createBaseNote set for buffer path —
-            // we use playbackRate for pitch, detune stays 0
-            oscillator.detune.cancelScheduledValues(0);
-            oscillator.detune.value = 0;
-
-            if (sf2Info) {
-                oscillator.buffer = sf2Info.buffer;
-
-                // Calculate playback rate based on pitch relative to root key.
-                // coarseTune = semitones, fineTune = cents, correction = sample header cents.
-                // rate = 2^((pitch - rootKey + coarseTune + (fineTune + correction)/100) / 12)
-                // Note: fineTune and correction are additive (both in cents).
-                const semitoneOffset = pitch - sf2Info.rootKey + (sf2Info.coarseTune || 0)
-                    + (sf2Info.fineTune + sf2Info.correction) / 100;
-                const rate = Math.pow(2, semitoneOffset / 12);
-                oscillator.playbackRate.value = rate;
-
-                // Support pitch bend: schedule playbackRate changes based on pitchBend points
-                if (option.pitchBend && option.pitchBend.length) {
-                    const songStartTime = this.states.startTime;
-                    const baseLatency = this.baseLatency;
-                    option.pitchBend.forEach((p) => {
-                        const t = Math.max(0, p.time + songStartTime + baseLatency);
-                        oscillator.playbackRate.setValueAtTime(
-                            rate * Math.pow(2, p.value / 12),
-                            t
-                        );
-                    });
-                }
-
-                // Set loop points (convert sample frames → seconds)
-                const sampleRate = sf2Info.originalSampleRate;
-                if (sf2Info.loopMode === 0) {
-                    oscillator.loop = false;
-                } else {
-                    oscillator.loop = true;
-                    oscillator.loopStart = sf2Info.startLoop / sampleRate;
-                    oscillator.loopEnd = sf2Info.endLoop / sampleRate;
-                }
-
-                // Cache envelope for the release/decay section below
-                note._sf2Envelope = sf2Info.envelope;
-                note._sf2Gain = sf2Info.gain != null ? sf2Info.gain : 1;
-            }
-            break;
+            // SF2 SoundFont sample playback — delegated to sf2-renderer.js.
+            // (createNote short-circuits above for soundQuality=4, this is a
+            // defensive fallback for direct calls.)
+            return renderSF2Note.call(this, option);
         }
     }
 
@@ -428,50 +387,9 @@ export default function createNote(option) {
             }
 
         case 4: {
-            // SF2 envelope
-            const sf2Env = note._sf2Envelope || { delay: 0, attack: 0.001, hold: 0, decay: 0, sustain: 1.0, release: 0.05 };
-            console.log('SF2 Envelope:', sf2Env);
-            // Generic SF2 ADSR schedule (delay → attack → hold → decay → sustain → release)
-            // Use linear ramps and avoid special-casing by instrument type here.
-            let velocity = gainNode.gain.value * 1.5 //* (note._sf2Gain != null ? note._sf2Gain : 1);
-            const attackStart = note.start + (sf2Env.delay || 0);
-            const attackTime = Math.max(sf2Env.attack || 0, 0.001);
-            const holdTime = Math.max(sf2Env.hold || 0, 0);
-            const decayTime = Math.max(sf2Env.decay || 0, 0.001);
-            const sustainLevel = sf2Env.sustain || 1.0;
-            const releaseTime = Math.max(sf2Env.release || 0.05, 0.001);
-
-            // Start scheduling
-            gainNode.gain.setValueAtTime(0, attackStart);
-            // Attack to peak
-            gainNode.gain.setTargetAtTime(velocity, Math.min(attackStart, note.stop), attackTime * 0.25);
-            const attackEnd = attackStart + attackTime;
-            const decayStart = attackEnd + holdTime;
-
-            // Decay to sustain level (ensure we start from peak at decayStart)
-            gainNode.gain.setTargetAtTime(velocity * sustainLevel, Math.min(decayStart, note.stop), decayTime * 0.25);
-
-            // Expression/filter handling remains but is independent of ADSR shape
-            if (option.expression && filter) {
-                const songStartTime = this.states.startTime;
-                const baseLatency = this.baseLatency;
-                const pitchFreq = isBuffer ? note.pitch : 440;
-                const nyquist = this.context.sampleRate / 2;
-                option.expression.forEach((p) => {
-                    const t = Math.max(0, p.time + songStartTime + baseLatency);
-                    const expScale = p.value / 127;
-                    const baseCutoff = pitchFreq * 4;
-                    const maxCutoff = Math.min(nyquist, 16000);
-                    const targetFreq = baseCutoff + (maxCutoff - baseCutoff) * Math.pow(expScale, 4);
-                    filter.frequency.linearRampToValueAtTime(targetFreq, t);
-                });
-            }
-
-            // Release: estimate current level at note.stop and ramp to 0
-            const releaseStart = note.stop;
-            const releaseEnd = note.stop + releaseTime;
-            gainNode.gain.setTargetAtTime(0, releaseStart, releaseTime * 0.25);
-            this.stopAudioNode(oscillator, releaseEnd, stopGainNode, isNoiseCut);
+            // SF2 envelope scheduling now lives in sf2-renderer.js.
+            // This case is unreachable for soundQuality=4 (short-circuited above),
+            // kept only as a safe no-op fallback.
             break;
         }
     }

@@ -1,86 +1,74 @@
 /**
  * Independent SF2 parser (player/sf2/parser.js)
  * Returns only structured parsed data. No lookup or selection logic.
+ *
+ * The RIFF container traversal is delegated to riff.js — this module only
+ * understands SF2-specific chunk layouts (shdr/inst/ibag/igen/phdr/pbag/pgen).
  */
 
 import { SF2Gen, signed16 } from './constants.js';
 import { readString, parseSampleHeaders, parseInstruments, parseBags, parseGenerators, parsePresetHeaders } from './io.js';
 import { buildInstrumentSamples } from './builder.js';
 import { decodeSF2Sample } from './decoder.js';
+import { parseRIFF, findList, readString as riffReadString } from './riff.js';
 
 export { decodeSF2Sample };
 
+/**
+ * Parse a SoundFont 2 (.sf2) file.
+ * @param {ArrayBuffer} arrayBuffer
+ * @returns {Object} { samples, instruments, presets, sampleData }
+ */
 export function parseSF2(arrayBuffer) {
-    const dataView = new DataView(arrayBuffer);
-    let offset = 0;
-    const riffId = readString(dataView, offset, 4);
-    if (riffId !== 'RIFF') throw new Error('Not a RIFF file');
-    offset += 4;
-    const riffSize = dataView.getUint32(offset, true);
-    offset += 4;
-    const riffType = readString(dataView, offset, 4);
-    if (riffType !== 'sfbk') throw new Error('Not a SoundFont file');
-    offset += 4;
+    const root = parseRIFF(arrayBuffer);
+    if (root.type !== 'sfbk') {
+        throw new Error(`Not a SoundFont file (form type "${root.type}")`);
+    }
 
+    const dataView = new DataView(arrayBuffer);
+    const littleEndian = root.littleEndian;
+
+    // --- sdta: raw sample data chunk -----------------------------------
+    const sdtaList = findList(root, 'sdta');
     let sampleData = null;
+    if (sdtaList) {
+        for (const chunk of sdtaList.chunks) {
+            if (chunk.id === 'smpl') {
+                sampleData = chunk.data;
+                break;
+            }
+            // 24-bit sf2 variants may use the 'sm24' chunk alongside 'smpl';
+            // we only consume the 16-bit 'smpl' payload.
+        }
+    }
+    if (!sampleData) throw new Error('SF2: No sample data found');
+
+    // --- pdta: header/index chunks -------------------------------------
     let sampleHeaders = [];
     let instruments = [];
+    let instrumentBags = [];
+    let instrumentGens = [];
     let presetHeaders = [];
     let presetBags = [];
     let presetGens = [];
-    let instrumentBags = [];
-    let instrumentGens = [];
 
-    while (offset < arrayBuffer.byteLength) {
-        const chunkId = readString(dataView, offset, 4);
-        offset += 4;
-        const chunkSize = dataView.getUint32(offset, true);
-        offset += 4;
-        const paddedSize = chunkSize + (chunkSize & 1);
-        const chunkEnd = offset + paddedSize;
-
-        if (chunkId === 'LIST') {
-            const listType = readString(dataView, offset, 4);
-            offset += 4;
-            if (listType === 'sdta') {
-                while (offset < chunkEnd) {
-                    const subId = readString(dataView, offset, 4);
-                    offset += 4;
-                    const subSize = dataView.getUint32(offset, true);
-                    offset += 4;
-                    const subPadded = subSize + (subSize & 1);
-                    if (subId === 'smpl') {
-                        sampleData = arrayBuffer.slice(offset, offset + subSize);
-                    }
-                    offset += subPadded;
-                }
-            } else if (listType === 'pdta') {
-                while (offset < chunkEnd) {
-                    const subId = readString(dataView, offset, 4);
-                    offset += 4;
-                    const subSize = dataView.getUint32(offset, true);
-                    offset += 4;
-                    const subPadded = subSize + (subSize & 1);
-                    switch (subId) {
-                        case 'shdr': sampleHeaders = parseSampleHeaders(dataView, offset, subSize); break;
-                        case 'inst': instruments = parseInstruments(dataView, offset, subSize); break;
-                        case 'ibag': instrumentBags = parseBags(dataView, offset, subSize); break;
-                        case 'igen': instrumentGens = parseGenerators(dataView, offset, subSize); break;
-                        case 'phdr': presetHeaders = parsePresetHeaders(dataView, offset, subSize); break;
-                        case 'pbag': presetBags = parseBags(dataView, offset, subSize); break;
-                        case 'pgen': presetGens = parseGenerators(dataView, offset, subSize); break;
-                    }
-                    offset += subPadded;
-                }
-            } else {
-                offset = chunkEnd;
+    const pdtaList = findList(root, 'pdta');
+    if (pdtaList) {
+        for (const chunk of pdtaList.chunks) {
+            const o = chunk.dataOffset;
+            const s = chunk.size;
+            switch (chunk.id) {
+                case 'shdr': sampleHeaders  = parseSampleHeaders(dataView, o, s, littleEndian); break;
+                case 'inst': instruments    = parseInstruments(dataView, o, s, littleEndian); break;
+                case 'ibag': instrumentBags = parseBags(dataView, o, s, littleEndian); break;
+                case 'igen': instrumentGens = parseGenerators(dataView, o, s, littleEndian); break;
+                case 'phdr': presetHeaders  = parsePresetHeaders(dataView, o, s, littleEndian); break;
+                case 'pbag': presetBags     = parseBags(dataView, o, s, littleEndian); break;
+                case 'pgen': presetGens     = parseGenerators(dataView, o, s, littleEndian); break;
+                default: break;
             }
-        } else {
-            offset = chunkEnd;
         }
     }
-
-    if (!sampleData) throw new Error('SF2: No sample data found');
 
     // Build structured instruments (zones -> samples)
     const instrumentSamples = buildInstrumentSamples(instruments, instrumentBags, instrumentGens, sampleHeaders, signed16);
@@ -118,11 +106,11 @@ export function parseSF2(arrayBuffer) {
                 }
             }
             if (instrumentIndex >= 0) {
-                zones.push({ instrumentIndex, keyRangeLo, keyRangeHi });
+                zones.push({ instrumentIndex, zoneBagIndex: b, keyRangeLo, keyRangeHi });
             }
         }
         presets.push({ name: preset.name, program: preset.presetNum, bank: preset.bank, isDrum, zones });
     }
 
-    return { samples, instruments: instrumentSamples, presets, sampleData };
+    return { samples, instruments: instrumentSamples, presets, sampleData, presetBags, presetGens };
 }
