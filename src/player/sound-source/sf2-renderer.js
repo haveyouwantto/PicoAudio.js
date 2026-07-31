@@ -21,6 +21,12 @@ const ENV_CURVE_SAMPLES = 64;
 /**
  * Compute the playback rate multiplier for a given layer & target pitch.
  * Handles root key, coarse/fine tune, sample correction and scale tuning.
+ *
+ * NOTE: this must match the classic provider's rate formula so existing
+ * samples keep their correct pitch:
+ *   rate = 2^((pitch - rootKey + coarseTune + (fineTune + correction)/100) / 12)
+ * scaleTuning (SF2 gen 56) scales the per-semitone spacing only when the
+ * font explicitly sets it (non-100); default 100 keeps classic behavior.
  */
 function computePlaybackRate(pitch, layer) {
     const rootKey = layer.rootKey != null ? layer.rootKey : 60;
@@ -29,11 +35,15 @@ function computePlaybackRate(pitch, layer) {
     const correction = layer.correction || 0;
     const scaleTuning = layer.scaleTuning != null ? layer.scaleTuning : 100;
 
-    // SF2: tuning is specified in cents relative to the recorded root key.
-    // scaleTuning (100 = normal chromatic) scales the per-semitone spacing.
-    const centsFromRoot = (pitch - rootKey) * scaleTuning;
-    const totalCents = centsFromRoot + coarse * 100 + fine + correction;
-    return Math.pow(2, totalCents / 1200);
+    let semitoneOffset;
+    if (scaleTuning === 100) {
+        // Classic formula — identical to the original provider (per-semitone = 100 cents)
+        semitoneOffset = pitch - rootKey + coarse + (fine + correction) / 100;
+    } else {
+        // Font explicitly sets scale tuning (cents per key)
+        semitoneOffset = ((pitch - rootKey) * scaleTuning + coarse * 100 + fine + correction) / 100;
+    }
+    return Math.pow(2, semitoneOffset / 12);
 }
 
 /**
@@ -282,115 +292,67 @@ function buildLayer({
         layerGain.connect(stopGainNode);
     }
 
-    // --- vibrato LFO -> detune ---
-    const vib = layer.vibLFO || {};
-    const vibAmount = vib.toPitchCents || 0;
-    if (vibAmount !== 0) {
-        const vibOsc = context.createOscillator();
-        const vibGain = context.createGain();
-        vibOsc.type = 'sine';
-        vibOsc.frequency.value = vib.freqHz || 5;
-        vibGain.gain.value = vibAmount; // cents
-        vibOsc.connect(vibGain);
-        vibGain.connect(source.detune);
+    // --- vibrato / mod LFO / mod-envelope → detune are intentionally NOT
+    // connected. The classic PicoAudio SF2 renderer never modulated detune;
+    // doing so made sustained notes audibly slur / detune (e.g. inst 41).
+    // Only filter-related modulation is preserved below.
 
-        const vibStart = start + (vib.delay || 0);
-        vibOsc.start(Math.max(start, vibStart));
-        safeStopAudioNode(vibOsc, stop + 0.05);
-
-        registerCleanup(() => {
-            try { vibOsc.stop(0); vibOsc.disconnect(); } catch (e) { /* noop */ }
-        });
-    }
-
-    // --- modulation LFO (pitch / filter / volume) ---
+    // --- modulation LFO → filter cutoff only ---
     const mod = layer.modLFO || {};
-    const modPitch = mod.toPitchCents || 0;
     const modFilter = mod.toFilterFcCents || 0;
-    const modVol = mod.toVolumeGain || 0;
-    if (modPitch !== 0 || modFilter !== 0 || (modVol !== 0 && modVol !== 1)) {
+    if (modFilter !== 0 && filter) {
         const modOsc = context.createOscillator();
         modOsc.type = 'sine';
         modOsc.frequency.value = mod.freqHz || 5;
+        const g = context.createGain();
+        // Approximate cents modulation on the cutoff: derive a per-cents Hz
+        // scale at the current cutoff.
+        const baseFc = filter.frequency.value;
+        const centsToHz = baseFc * (Math.pow(2, Math.abs(modFilter) / 1200) - 1);
+        g.gain.value = centsToHz;
+        modOsc.connect(g);
+        g.connect(filter.frequency);
         const modStart = start + (mod.delay || 0);
-
-        let hasDestination = false;
-        if (modPitch !== 0) {
-            const g = context.createGain();
-            g.gain.value = modPitch; // cents
-            modOsc.connect(g);
-            g.connect(source.detune);
-            hasDestination = true;
-        }
-        if (modFilter !== 0 && filter) {
-            const g = context.createGain();
-            // Approximate cents modulation on the cutoff: the filter.frequency
-            // AudioParam accepts Hz. We derive a per-cents Hz scale at current
-            // cutoff: dHz = fc * (2^(cents/1200) - 1), computed around the
-            // center. This keeps the LFO mod roughly centered.
-            const baseFc = filter.frequency.value;
-            const centsToHz = baseFc * (Math.pow(2, Math.abs(modFilter) / 1200) - 1);
-            g.gain.value = centsToHz;
-            modOsc.connect(g);
-            g.connect(filter.frequency);
-            hasDestination = true;
-        }
-        if (modVol !== 0 && modVol !== 1) {
-            const g = context.createGain();
-            // Mod LFO volume is tiny in most fonts; apply a gentle ±scale.
-            g.gain.value = 0.5 * (modVol - 1);
-            modOsc.connect(g);
-            g.connect(layerGain.gain);
-            hasDestination = true;
-        }
-        if (hasDestination) {
-            modOsc.start(Math.max(start, modStart));
-            safeStopAudioNode(modOsc, stop + 0.05);
-            registerCleanup(() => {
-                try { modOsc.stop(0); modOsc.disconnect(); } catch (e) { /* noop */ }
-            });
-        }
+        modOsc.start(Math.max(start, modStart));
+        safeStopAudioNode(modOsc, stop + 0.05);
+        registerCleanup(() => {
+            try { modOsc.stop(0); modOsc.disconnect(); } catch (e) { /* noop */ }
+        });
     }
 
-    // --- modulation envelope -> pitch & filter ---
+    // --- modulation envelope → filter cutoff only ---
     const modEnv = layer.modEnv || {};
-    const pitchModAmount = layer.pitchModEnvAmount || 0;
     const filterModAmount = layer.filterEnvAmount || 0;
 
     let hasModEnvAutomation = false;
     if (modEnv.attack > 0 || modEnv.decay > 0 || modEnv.sustain < 1.0) hasModEnvAutomation = true;
 
-    if (hasModEnvAutomation && (pitchModAmount !== 0 || filterModAmount !== 0)) {
-        // Envelope curve duration: from note start until release (cap a few seconds).
+    if (hasModEnvAutomation && filterModAmount !== 0 && filter) {
+        // Envelope curve duration: from note start until a few seconds in.
         const envDuration = Math.max(0.1, Math.min((stop - start) * 0.25 + 0.25, 2.0));
-
-        if (pitchModAmount !== 0) {
-            const curve = buildEnvelopeCurve(modEnv, envDuration, pitchModAmount);
-            try {
-                source.detune.setValueCurveAtTime(curve, start, envDuration);
-            } catch (e) { /* noop */ }
+        const baseFc = filter.frequency.value;
+        const curve = buildEnvelopeCurve(modEnv, envDuration, 1);
+        const fcCurve = new Float32Array(curve.length);
+        for (let i = 0; i < curve.length; i++) {
+            fcCurve[i] = baseFc * Math.pow(2, (curve[i] * filterModAmount) / 1200);
         }
-        if (filterModAmount !== 0 && filter) {
-            const baseFc = filter.frequency.value;
-            const curve = buildEnvelopeCurve(modEnv, envDuration, 1);
-            const fcCurve = new Float32Array(curve.length);
-            for (let i = 0; i < curve.length; i++) {
-                fcCurve[i] = baseFc * Math.pow(2, (curve[i] * filterModAmount) / 1200);
-            }
-            try {
-                filter.frequency.setValueCurveAtTime(fcCurve, start, envDuration);
-            } catch (e) { /* noop */ }
-        }
+        try {
+            filter.frequency.setValueCurveAtTime(fcCurve, start, envDuration);
+        } catch (e) { /* noop */ }
     }
 
     // --- volume envelope (ADSR) scheduling ---
+    // Peak must be the layer's actual gain (sf2Gain × velGain, already set
+    // as .value above) so the ADSR ramps 0 → actual → sustain, instead of
+    // hard-clamping to 1.0 which caused severe clipping.
     const env = layer.envelope || {};
+    const envPeak = layerGain.gain.value || (sf2Gain * velGain);
     scheduleVolumeEnvelope({
         gainNode: layerGain,
         env,
         start,
         stop,
-        peak: 1,
+        peak: envPeak,
     });
 
     // --- start the source ---

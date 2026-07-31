@@ -332,14 +332,12 @@ export function buildPresetZones(presets, presetBags, presetGens, instruments, s
             const inst = instruments[zone.instrumentIndex];
             if (!inst) continue;
 
-            const bag = presetBags[zone.zoneBagIndex];
-            if (!bag) continue;
-            const nextBag = (zone.zoneBagIndex + 1 < presetBags.length)
-                ? presetBags[zone.zoneBagIndex + 1]
-                : null;
-            const genStart = bag.genIndex;
-            const genEnd = nextBag ? nextBag.genIndex : presetGens.length;
-            const presetZoneGens = parseGeneratorsKV(presetGens, genStart, genEnd);
+            // NOTE: preset-level generator records (keyRange, overridingRootKey,
+            // scaleTuning, etc.) are intentionally NOT merged here. The original
+            // PicoAudio SF2 provider only merged instrument-global + instrument-zone
+            // generators; merging preset-zone generators changed tuning/selection
+            // for some instruments. Keep this behavior aligned with the classic
+            // renderer for correct pitch and zone selection.
 
             for (const sample of inst.samples) {
                 if (sample.sampleId == null || sample.sampleId < 0 || sample.sampleId >= sampleHeaders.length) continue;
@@ -347,7 +345,6 @@ export function buildPresetZones(presets, presetBags, presetGens, instruments, s
                 const merged = mergeGenerators(
                     inst.generators, // instrument global
                     sample.generators, // instrument zone
-                    presetZoneGens,   // preset zone (highest precedence besides sample ID)
                 );
 
                 // Default key/vel range if not specified anywhere
