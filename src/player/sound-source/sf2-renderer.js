@@ -119,10 +119,13 @@ export function renderSF2Note(option) {
     };
 
     const safeStopAudioNode = (node, time) => {
+        if (!node || typeof node.stop !== 'function') return;
         try {
-            this.stopAudioNode && this.stopAudioNode(node, time);
+            node.stop(time);
         } catch (e) {
-            // ignore
+            // iOS workaround: node.stop() may be called twice; ignore.
+            // The shared stopGainNode is NOT muted here so other layers
+            // remain unaffected.
         }
     };
 
