@@ -377,8 +377,14 @@ function buildLayer({
 }
 
 /**
- * Schedule a 6-stage volume envelope on an AudioParam using setTargetAtTime
- * approximations (exponential approach), staying within note start/stop.
+ * Schedule a 6-stage volume envelope using exponential segments
+ * (SF2-style ADSR). Each stage uses `setTargetAtTime` with a time constant
+ * of a quarter of the stage duration — matching the classic PicoAudio SF2
+ * renderer, which produced natural exponential decays rather than linear
+ * ramps. A shorter time constant makes the exponential reach its target
+ * noticeably within the stage, keeping attack punchy and decays smooth.
+ *
+ * Stages: delay → attack(0→peak) → hold → decay(peak→sustain) → release(→0).
  */
 function scheduleVolumeEnvelope({ gainNode, env, start, stop, peak }) {
     const delay = Math.max(0, env.delay || 0);
@@ -389,32 +395,34 @@ function scheduleVolumeEnvelope({ gainNode, env, start, stop, peak }) {
     const release = Math.max(0.001, env.release || 0.001);
 
     const attackStart = start + delay;
-    const attackEnd = Math.min(attackStart + attack, stop);
-    const decayStart = Math.min(attackEnd + hold, stop);
-    const releaseStart = Math.max(stop, attackStart);
 
     const param = gainNode.gain;
-
     param.cancelScheduledValues(0);
-    try {
-        param.setValueAtTime(0, attackStart);
-    } catch (e) { /* noop */ }
-    // Attack
+
+    // Per-stage exponential time constants (quarter of the stage length).
+    const ATTACK_TC = attack * 0.25;
+    const DECAY_TC = decay * 0.25;
+    const RELEASE_TC = release * 0.25;
+
+    // Delay: silence until attackStart.
+    param.setValueAtTime(0, attackStart);
+
+    // Attack: exponential rise 0 → peak.
     if (attackStart < stop) {
-        param.setTargetAtTime(peak, attackStart, attack * 0.25);
+        param.setTargetAtTime(peak, attackStart, ATTACK_TC);
     }
-    // Hold at peak after attack completes
-    if (attackEnd < decayStart) {
-        try {
-            param.setValueAtTime(peak, attackEnd);
-        } catch (e) { /* noop */ }
-    }
-    // Decay -> sustain
+
+    // Hold then decay: exponential drop peak → sustain, starting at
+    // attackEnd + hold (clamped to the note length).
+    const attackEnd = Math.min(attackStart + attack, stop);
+    const decayStart = Math.min(attackEnd + hold, stop);
     if (decayStart < stop) {
-        param.setTargetAtTime(peak * sustain, decayStart, decay * 0.25);
+        param.setTargetAtTime(Math.max(0.0001, peak * sustain), decayStart, DECAY_TC);
     }
-    // Release (note-off)
-    param.setTargetAtTime(0, releaseStart, release * 0.25);
+
+    // Release: exponential drop to 0 at note-off.
+    const releaseStart = stop;
+    param.setTargetAtTime(0, releaseStart, RELEASE_TC);
 }
 
 export default { renderSF2Note };
