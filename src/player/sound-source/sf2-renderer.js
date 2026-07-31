@@ -207,9 +207,18 @@ function buildLayer({
     const startOffsetSec = Math.min(offsetSec, maxOffset);
 
     // --- loop points (absolute frame -> buffer-relative seconds) ---
+    // Preserve the font's exact loop length. Some fonts (e.g. Neo1MGM) use
+    // micro-loops shorter than 1ms (a single waveform period); forcing a
+    // minimum 1ms loop extends the loop past its intended end and changes
+    // the sustained pitch (e.g. inst41 A4 rendered at ~354Hz instead of 440Hz).
     const loopStartSec = Math.max(0, (layer.startLoop - headerStart) / layer.originalSampleRate);
     const loopEndRaw = (layer.endLoop - headerStart) / layer.originalSampleRate;
-    const loopEndSec = Math.min(Math.max(loopStartSec + 0.001, loopEndRaw), buffer.duration);
+    let loopEndSec = Math.min(loopEndRaw, buffer.duration);
+    if (loopEndSec <= loopStartSec) {
+        // Degenerate/inverted loop in the font — fall back to the buffer end
+        // rather than skipping the loop entirely.
+        loopEndSec = buffer.duration;
+    }
 
     const loopMode = layer.loopMode || 0;
     switch (loopMode) {
@@ -260,7 +269,10 @@ function buildLayer({
     let hasPanner = false;
     if (context.createStereoPanner) {
         panner = context.createStereoPanner();
-        panner.pan.value = panPos;
+        // Clamp to the StereoPannerNode nominal range [-1, 1]. Some fonts store
+        // the pan generator as 0xFFFF (a "not set" marker); panToPosition turns
+        // that into ~15.6, which makes Chrome spam out-of-range warnings.
+        panner.pan.value = Math.max(-1, Math.min(1, panPos));
         hasPanner = true;
     } else if (context.createPanner) {
         panner = context.createPanner();
