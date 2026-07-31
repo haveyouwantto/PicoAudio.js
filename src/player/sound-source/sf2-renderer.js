@@ -248,9 +248,11 @@ function buildLayer({
     // --- per-layer gain (velocity + SF2 attenuation) ---
     const layerGain = context.createGain();
     const sf2Gain = layer.gain != null ? layer.gain : 1;
-    // Velocity response: mild curve so soft notes are softer without clipping.
+    // Velocity response: quadratic (velocity/127)^2, matching the classic
+    // PicoAudio velocity² curve. A linear offset would make soft notes too
+    // loud; a pure quadratic gives the natural soft→loud progression.
     const velNorm = velocity / 127;
-    const velGain = 0.25 + 0.75 * (velNorm * velNorm);
+    const velGain = velNorm * velNorm;
     layerGain.gain.value = sf2Gain * velGain;
 
     // --- filter ---
