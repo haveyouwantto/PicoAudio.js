@@ -66,7 +66,10 @@ export function timecentsToSeconds(tc) {
 }
 
 export function centibelsToGain(cb) {
-    if (cb <= 0) return 1.0;
+    // Faithful SF2 conversion: centibels of attenuation → linear gain.
+    // Do NOT clamp negative values to 1.0 — some fonts encode amplification
+    // as negative attenuation (FluidSynth honors this); the renderer's
+    // per-layer safety cap guards the output.
     return Math.pow(10, cb / -200);
 }
 

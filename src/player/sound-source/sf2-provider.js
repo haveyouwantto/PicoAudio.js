@@ -72,6 +72,53 @@ function computeFontGain(presetZones, samplePeaks) {
     return Math.max(FONT_GAIN_MIN, Math.min(FONT_GAIN_MAX, FONT_LOUDNESS_TARGET / meanLoudness));
 }
 
+// Internal balance range for drum kits (× their own median level).
+const DRUM_SCALE_MIN = 0.4;
+const DRUM_SCALE_MAX = 5.0;
+
+/**
+ * Balance the notes INSIDE each drum kit using the font's own parameters:
+ * a drum hit's level = sample peak × initialAttenuation. Each note is scaled
+ * toward the kit's median note level (clamped), so a kit whose ride cymbal is
+ * encoded 30 dB quieter than its kick (e.g. GeneralUser GS) sounds balanced
+ * without touching melodic instruments or assuming any absolute loudness.
+ */
+function balanceDrumKits(presetZones, samplePeaks) {
+    for (const pz of presetZones) {
+        if (!(pz.isDrum || pz.bank >= 120)) continue;
+
+        // Group zones by key range — the zones sharing a range are the
+        // velocity/key layers of one drum note.
+        const groups = new Map();
+        for (const z of pz.zones) {
+            const g = z.generators || {};
+            const peak = samplePeaks[z.sampleId] || 0;
+            if (!(peak > 0)) continue;
+            const attenuation = g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1;
+            const key = z.keyRange.join('-');
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push({ z, loudness: peak * attenuation });
+        }
+
+        // Note level = median of its velocity layers' loudnesses (the typical
+        // hit level), so multi-layer notes are not inflated by summing layers.
+        const notes = [];
+        for (const zones of groups.values()) {
+            const levels = zones.map(x => x.loudness).sort((a, b) => a - b);
+            notes.push({ zones, level: levels[Math.floor(levels.length / 2)] });
+        }
+        if (notes.length === 0) continue;
+        const medians = notes.map(n => n.level).sort((a, b) => a - b);
+        const kitMedian = medians[Math.floor(medians.length / 2)];
+        if (!(kitMedian > 0)) continue;
+
+        for (const { zones, level } of notes) {
+            const scale = Math.max(DRUM_SCALE_MIN, Math.min(DRUM_SCALE_MAX, kitMedian / level));
+            for (const { z } of zones) z.drumScale = scale;
+        }
+    }
+}
+
 /**
  * Load and parse an SF2 SoundFont file, pre-decoding all samples into AudioBuffers.
  * @param {AudioContext} ctx - The Web Audio API AudioContext
@@ -148,6 +195,7 @@ export function loadSF2(ctx, arrayBuffer) {
 
         console.log(`SF2 loaded: ${sampleHeaders.length} samples decoded, ${presetZones.length} presets`);
         sf2FontGain = computeFontGain(presetZones, samplePeaks);
+        balanceDrumKits(presetZones, samplePeaks);
         sf2Data.fontGain = sf2FontGain;
         console.log(`SF2 volume normalization: fontGain=${sf2FontGain.toFixed(3)}`);
         return true;
@@ -352,7 +400,7 @@ function resolveLayerParameters(zone, shdr, sampleId, preset, buffer) {
         attack:  g.attackVolEnv  != null ? g.attackVolEnv  : 0.001,
         hold:    g.holdVolEnv    != null ? g.holdVolEnv    : 0,
         decay:   g.decayVolEnv   != null ? g.decayVolEnv   : 0,
-        sustain: g.sustainVolEnv != null ? g.sustainVolEnv : 1.0,
+        sustain: Math.max(0, Math.min(1, g.sustainVolEnv != null ? g.sustainVolEnv : 1.0)),
         release: g.releaseVolEnv != null ? g.releaseVolEnv : 0.01,
     };
     // Keynum scaling: timecents per keynum * (root - 60)
@@ -397,9 +445,10 @@ function resolveLayerParameters(zone, shdr, sampleId, preset, buffer) {
         toVolumeGain: g.modLFOToVolEnv_gain != null ? g.modLFOToVolEnv_gain : 1,
     };
 
-    // Gain / pan — apply the font-level normalization on top of the zone's
-    // own attenuation, so loud fonts and quiet fonts land at similar levels.
-    let gain = (g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1) * sf2FontGain;
+    // Gain / pan — apply the font-level normalization + per-kit drum balance
+    // on top of the zone's own attenuation.
+    const drumScale = zone.drumScale != null ? zone.drumScale : 1;
+    let gain = (g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1) * sf2FontGain * drumScale;
     if (!isFinite(gain) || gain < 0) gain = 0;
     const pan = g.pan != null ? g.pan : 64;
     const pan1000 = g.pan1000 != null ? g.pan1000 : 500;
