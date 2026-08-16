@@ -328,6 +328,12 @@ export function buildPresetZones(presets, presetBags, presetGens, instruments, s
     const result = [];
     for (const preset of presets) {
         const zones = [];
+        // Preset-zone expansion iterates every preset bag × every instrument
+        // sample zone. Fonts like GeneralUser GS reference the same instrument
+        // from several preset bags, which used to multiply identical zones
+        // (e.g. 48 copies of one piano sample), blowing up per-note layer
+        // counts and audio-graph size. Deduplicate exact duplicates per preset.
+        const seen = new Set();
         for (const zone of preset.zones) {
             const inst = instruments[zone.instrumentIndex];
             if (!inst) continue;
@@ -338,6 +344,16 @@ export function buildPresetZones(presets, presetBags, presetGens, instruments, s
             // generators; merging preset-zone generators changed tuning/selection
             // for some instruments. Keep this behavior aligned with the classic
             // renderer for correct pitch and zone selection.
+
+            // Preset-zone key/velocity windows: instrument zones are clipped to
+            // the preset zone's ranges per the SF2 spec (a note outside the
+            // preset zone's window must not trigger its instrument zones).
+            const presetKeyRange = (zone.keyRangeLo != null || zone.keyRangeHi != null)
+                ? [zone.keyRangeLo || 0, zone.keyRangeHi != null ? zone.keyRangeHi : 127]
+                : null;
+            const presetVelRange = (zone.velRangeLo != null || zone.velRangeHi != null)
+                ? [zone.velRangeLo || 0, zone.velRangeHi != null ? zone.velRangeHi : 127]
+                : null;
 
             for (const sample of inst.samples) {
                 if (sample.sampleId == null || sample.sampleId < 0 || sample.sampleId >= sampleHeaders.length) continue;
@@ -350,6 +366,35 @@ export function buildPresetZones(presets, presetBags, presetGens, instruments, s
                 // Default key/vel range if not specified anywhere
                 if (!merged.keyRange) merged.keyRange = [0, 127];
                 if (!merged.velRange) merged.velRange = [0, 127];
+
+                // Clip to the preset zone's window
+                if (presetKeyRange) {
+                    merged.keyRange = [
+                        Math.max(merged.keyRange[0], presetKeyRange[0]),
+                        Math.min(merged.keyRange[1], presetKeyRange[1]),
+                    ];
+                }
+                if (presetVelRange) {
+                    merged.velRange = [
+                        Math.max(merged.velRange[0], presetVelRange[0]),
+                        Math.min(merged.velRange[1], presetVelRange[1]),
+                    ];
+                }
+                if (merged.keyRange[0] > merged.keyRange[1]) continue;
+                if (merged.velRange[0] > merged.velRange[1]) continue;
+
+                // Identity = sample + clipped ranges + the COMPLETE merged
+                // generator map. A partial key would collapse genuinely
+                // different layers (e.g. zones sharing a sample but using
+                // different envelopes/filters/tuning) into one.
+                const genKey = JSON.stringify(
+                    Object.entries(merged)
+                        .filter(([k]) => k !== '_defaults')
+                        .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+                );
+                const dedupeKey = `${sample.sampleId}|${merged.keyRange.join('-')}|${merged.velRange.join('-')}|${genKey}`;
+                if (seen.has(dedupeKey)) continue;
+                seen.add(dedupeKey);
 
                 zones.push({
                     keyRange: merged.keyRange,

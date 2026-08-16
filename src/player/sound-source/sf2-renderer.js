@@ -13,7 +13,7 @@
  * createNote/createPercussionNote delegate here for soundQuality=4.
  */
 
-import { getSF2Layers, panToPosition } from "./sf2-provider";
+import { getSF2Layers, panToPosition } from "./sf2-provider.js";
 
 // Envelope curve sample count for setValueCurveAtTime
 const ENV_CURVE_SAMPLES = 64;
@@ -253,7 +253,13 @@ function buildLayer({
     // loud; a pure quadratic gives the natural soft→loud progression.
     const velNorm = velocity / 127;
     const velGain = velNorm * velNorm;
-    layerGain.gain.value = sf2Gain * velGain;
+    let layerLevel = sf2Gain * velGain;
+    // Safety: never let a broken/NaN gain reach the audio graph, and cap a
+    // single layer at unity (multi-layer/chord peaks are handled by the
+    // master compressor).
+    if (!isFinite(layerLevel) || layerLevel < 0) layerLevel = 0;
+    if (layerLevel > 1) layerLevel = 1;
+    layerGain.gain.value = layerLevel;
 
     // --- filter ---
     let filter = null;

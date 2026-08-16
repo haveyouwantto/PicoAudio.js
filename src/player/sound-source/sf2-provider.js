@@ -22,6 +22,56 @@ let sf2Data = null;
 /** Pre-decoded AudioBuffers, keyed by sampleHeaderIndex */
 const sf2BufferCache = [];
 
+/** Font-level volume normalization gain (1 = no change) */
+let sf2FontGain = 1;
+
+/** Target mean per-zone loudness (peak × attenuation) after normalization.
+ *  0.15 ≈ Neo1MGM's measured level, which the classic players treat as normal. */
+const FONT_LOUDNESS_TARGET = 0.15;
+const FONT_GAIN_MIN = 0.25;
+const FONT_GAIN_MAX = 2.5;
+
+/**
+ * Estimate the peak level of a Float32 sample array (strided scan for speed).
+ */
+function computePeak(floatArray) {
+    let peak = 0;
+    const length = floatArray.length;
+    const step = Math.max(1, Math.floor(length / 20000));
+    for (let i = 0; i < length; i += step) {
+        const a = Math.abs(floatArray[i]);
+        if (a > peak) peak = a;
+    }
+    return peak;
+}
+
+/**
+ * Compute a font-level gain that brings the font's mean zone loudness
+ * (sample peak × initial attenuation × sustain) to FONT_LOUDNESS_TARGET.
+ * Fonts with hot samples / weak attenuation (e.g. GeneralUser GS, soundbank-emg)
+ * get pulled down; quiet fonts get boosted — without flattening the font's
+ * internal dynamics.
+ */
+function computeFontGain(presetZones, samplePeaks) {
+    let sum = 0;
+    let count = 0;
+    for (const pz of presetZones) {
+        for (const z of pz.zones) {
+            const g = z.generators || {};
+            const peak = samplePeaks[z.sampleId] || 0;
+            if (!(peak > 0)) continue;
+            const attenuation = g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1;
+            const sustain = g.sustainVolEnv != null ? g.sustainVolEnv : 1;
+            sum += peak * attenuation * sustain;
+            count++;
+        }
+    }
+    if (count === 0) return 1;
+    const meanLoudness = sum / count;
+    if (!(meanLoudness > 0) || !isFinite(meanLoudness)) return 1;
+    return Math.max(FONT_GAIN_MIN, Math.min(FONT_GAIN_MAX, FONT_LOUDNESS_TARGET / meanLoudness));
+}
+
 /**
  * Load and parse an SF2 SoundFont file, pre-decoding all samples into AudioBuffers.
  * @param {AudioContext} ctx - The Web Audio API AudioContext
@@ -43,6 +93,7 @@ export function loadSF2(ctx, arrayBuffer) {
 
         // Clear any previous cache
         sf2BufferCache.length = 0;
+        const samplePeaks = new Float64Array(sampleHeaders.length);
 
         // Pre-decode every sample into an AudioBuffer
         const paired = new Set();
@@ -59,6 +110,7 @@ export function loadSF2(ctx, arrayBuffer) {
                 sf2BufferCache[i] = null;
                 continue;
             }
+            samplePeaks[i] = computePeak(floatSamples);
 
             if (paired.has(i)) continue;
 
@@ -70,6 +122,7 @@ export function loadSF2(ctx, arrayBuffer) {
                 const linkedHdr = sampleHeaders[linkedIdx];
                 if (linkedHdr && linkedHdr.sampleRate === shdr.sampleRate) {
                     const floatSamples2 = decodeSF2Sample(sampleData, linkedHdr.start, linkedHdr.end);
+                    samplePeaks[linkedIdx] = computePeak(floatSamples2);
                     const outLen = Math.max(floatSamples.length, floatSamples2.length);
                     audioBuffer = ctx.createBuffer(2, outLen, shdr.sampleRate);
 
@@ -94,6 +147,9 @@ export function loadSF2(ctx, arrayBuffer) {
         }
 
         console.log(`SF2 loaded: ${sampleHeaders.length} samples decoded, ${presetZones.length} presets`);
+        sf2FontGain = computeFontGain(presetZones, samplePeaks);
+        sf2Data.fontGain = sf2FontGain;
+        console.log(`SF2 volume normalization: fontGain=${sf2FontGain.toFixed(3)}`);
         return true;
     } catch (e) {
         console.error('Failed to parse SF2:', e);
@@ -132,6 +188,13 @@ export function getSF2Data() {
  */
 export function isSF2Loaded() {
     return sf2Data !== null;
+}
+
+/**
+ * Current font-level volume normalization gain (1 = no normalization).
+ */
+export function getSF2FontGain() {
+    return sf2FontGain;
 }
 
 /**
@@ -189,32 +252,36 @@ export function getSF2Layers(program, pitch, velocity = 100, isDrum = false, ban
 
     const { presetZones, samples: sampleHeaders } = sf2Data;
 
-    // Find matching presets (drum bank 120+ or explicit drum flag)
+    // Deterministic preset selection. The app does not expose MIDI bank
+    // selection, so melodic instruments always resolve to bank 0. A drum note
+    // must trigger exactly ONE drum kit — layering every kit that covers the
+    // pitch (Ct2mgm: 138 kits) caused ~200 audio sources per hit (freeze) and
+    // summed full-gain layers (loudness).
+    const presetIsDrum = (pz) => pz.isDrum || pz.bank >= 120;
+    const presetCovers = (pz) => pz.zones.some(z =>
+        pitch >= z.keyRange[0] && pitch <= z.keyRange[1] &&
+        velocity >= z.velRange[0] && velocity <= z.velRange[1]);
+
+    const selectors = isDrum
+        ? [
+            // exact kit from the MIDI (bank + program)
+            (pz) => presetIsDrum(pz) && pz.bank === bank && pz.program === program,
+            // GM standard drum kit
+            (pz) => presetIsDrum(pz) && pz.bank === 128 && pz.program === 0,
+            // bank-0 kit with the requested program
+            (pz) => presetIsDrum(pz) && pz.bank === 0 && pz.program === program,
+        ]
+        : [
+            // bank 0 only (MIDI bank select is intentionally ignored)
+            (pz) => !presetIsDrum(pz) && pz.bank === 0 && pz.program === program,
+        ];
+
     let matchedPresets = [];
-    for (const pz of presetZones) {
-        const presetIsDrum = pz.isDrum || pz.bank >= 120;
-        if (isDrum !== presetIsDrum) continue;
-        if (pz.bank === bank && pz.program === program) {
-            matchedPresets.push(pz);
-        }
-    }
-    // Fallback: plain program match ignoring bank (for non-drum)
-    if (matchedPresets.length === 0 && !isDrum) {
-        for (const pz of presetZones) {
-            if (pz.isDrum || pz.bank >= 120) continue;
-            if (pz.program === program) matchedPresets.push(pz);
-        }
-    }
-    // Drum fallback: any drum preset whose keyRange covers pitch
-    if (matchedPresets.length === 0 && isDrum) {
-        for (const pz of presetZones) {
-            if (!pz.isDrum && pz.bank < 120) continue;
-            for (const z of pz.zones) {
-                if (z.keyRange && pitch >= z.keyRange[0] && pitch <= z.keyRange[1]) {
-                    matchedPresets.push(pz);
-                    break;
-                }
-            }
+    for (const selector of selectors) {
+        const matches = presetZones.filter(selector).filter(presetCovers);
+        if (matches.length > 0) {
+            matchedPresets = matches;
+            break;
         }
     }
     if (matchedPresets.length === 0) return [];
@@ -241,6 +308,15 @@ export function getSF2Layers(program, pitch, velocity = 100, isDrum = false, ban
             const layer = resolveLayerParameters(zone, shdr, sampleId, pz, buffer);
             if (layer) layers.push(layer);
         }
+    }
+
+    // Safety net: never let one note explode into hundreds of audio sources.
+    // Legit fonts use 1-4 layers per note; anything beyond that is pathological.
+    const MAX_LAYERS = 8;
+    if (layers.length > MAX_LAYERS) {
+        console.warn(`SF2: ${layers.length} layers for program ${program} pitch ${pitch} (drum=${isDrum}) — capping at ${MAX_LAYERS}`);
+        layers.sort((a, b) => (b.gain || 0) - (a.gain || 0));
+        layers.length = MAX_LAYERS;
     }
     return layers;
 }
@@ -321,8 +397,10 @@ function resolveLayerParameters(zone, shdr, sampleId, preset, buffer) {
         toVolumeGain: g.modLFOToVolEnv_gain != null ? g.modLFOToVolEnv_gain : 1,
     };
 
-    // Gain / pan
-    const gain = g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1;
+    // Gain / pan — apply the font-level normalization on top of the zone's
+    // own attenuation, so loud fonts and quiet fonts land at similar levels.
+    let gain = (g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1) * sf2FontGain;
+    if (!isFinite(gain) || gain < 0) gain = 0;
     const pan = g.pan != null ? g.pan : 64;
     const pan1000 = g.pan1000 != null ? g.pan1000 : 500;
 
@@ -377,4 +455,4 @@ export function getSF2Sample(program, pitch, isDrum = false, bank = 0, velocity 
     return layers.length > 0 ? layers[0] : null;
 }
 
-export default { loadSF2, getSF2Sample, getSF2Layers, isSF2Loaded, getSF2Data, panToPosition };
+export default { loadSF2, getSF2Sample, getSF2Layers, isSF2Loaded, getSF2Data, getSF2FontGain, panToPosition };

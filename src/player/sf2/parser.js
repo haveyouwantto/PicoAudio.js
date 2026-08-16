@@ -93,6 +93,8 @@ export function parseSF2(arrayBuffer) {
             let instrumentIndex = -1;
             let keyRangeLo = 0;
             let keyRangeHi = 127;
+            let velRangeLo = 0;
+            let velRangeHi = 127;
             for (let g = genStart; g < genEnd && g < presetGens.length; g++) {
                 const gen = presetGens[g];
                 switch (gen.type) {
@@ -100,13 +102,17 @@ export function parseSF2(arrayBuffer) {
                         keyRangeLo = gen.amount & 0xFF;
                         keyRangeHi = (gen.amount >> 8) & 0xFF;
                         break;
+                    case SF2Gen.velRange:
+                        velRangeLo = gen.amount & 0xFF;
+                        velRangeHi = (gen.amount >> 8) & 0xFF;
+                        break;
                     case SF2Gen.instrument:
                         instrumentIndex = gen.amount;
                         break;
                 }
             }
             if (instrumentIndex >= 0) {
-                zones.push({ instrumentIndex, zoneBagIndex: b, keyRangeLo, keyRangeHi });
+                zones.push({ instrumentIndex, zoneBagIndex: b, keyRangeLo, keyRangeHi, velRangeLo, velRangeHi });
             }
         }
         presets.push({ name: preset.name, program: preset.presetNum, bank: preset.bank, isDrum, zones });
