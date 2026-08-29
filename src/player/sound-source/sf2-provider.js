@@ -22,100 +22,61 @@ let sf2Data = null;
 /** Pre-decoded AudioBuffers, keyed by sampleHeaderIndex */
 const sf2BufferCache = [];
 
-/** Font-level volume normalization gain (1 = no change) */
+/** Compatibility export. SF2 playback uses the font's encoded gain unchanged. */
 let sf2FontGain = 1;
 
-/** Target mean per-zone loudness (peak × attenuation) after normalization.
- *  0.15 ≈ Neo1MGM's measured level, which the classic players treat as normal. */
-const FONT_LOUDNESS_TARGET = 0.15;
-const FONT_GAIN_MIN = 0.25;
-const FONT_GAIN_MAX = 2.5;
+// A conservative ±6 dB guard rail for preset-level loudness matching. The
+// SoundFont generators remain authoritative; this only compensates for sample
+// recordings exported at very different PCM levels.
+const PRESET_BALANCE_MIN = 0.5;
+const PRESET_BALANCE_MAX = 2.0;
 
-/**
- * Estimate the peak level of a Float32 sample array (strided scan for speed).
- */
-function computePeak(floatArray) {
-    let peak = 0;
-    const length = floatArray.length;
-    const step = Math.max(1, Math.floor(length / 20000));
-    for (let i = 0; i < length; i += step) {
-        const a = Math.abs(floatArray[i]);
-        if (a > peak) peak = a;
-    }
-    return peak;
-}
-
-/**
- * Compute a font-level gain that brings the font's mean zone loudness
- * (sample peak × initial attenuation × sustain) to FONT_LOUDNESS_TARGET.
- * Fonts with hot samples / weak attenuation (e.g. GeneralUser GS, soundbank-emg)
- * get pulled down; quiet fonts get boosted — without flattening the font's
- * internal dynamics.
- */
-function computeFontGain(presetZones, samplePeaks) {
-    let sum = 0;
+function computeRms(floatArray) {
+    let squareSum = 0;
     let count = 0;
-    for (const pz of presetZones) {
-        for (const z of pz.zones) {
-            const g = z.generators || {};
-            const peak = samplePeaks[z.sampleId] || 0;
-            if (!(peak > 0)) continue;
-            const attenuation = g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1;
-            const sustain = g.sustainVolEnv != null ? g.sustainVolEnv : 1;
-            sum += peak * attenuation * sustain;
-            count++;
-        }
+    const step = Math.max(1, Math.floor(floatArray.length / 20000));
+    for (let i = 0; i < floatArray.length; i += step) {
+        squareSum += floatArray[i] * floatArray[i];
+        count++;
     }
-    if (count === 0) return 1;
-    const meanLoudness = sum / count;
-    if (!(meanLoudness > 0) || !isFinite(meanLoudness)) return 1;
-    return Math.max(FONT_GAIN_MIN, Math.min(FONT_GAIN_MAX, FONT_LOUDNESS_TARGET / meanLoudness));
+    return count > 0 ? Math.sqrt(squareSum / count) : 0;
 }
 
-// Internal balance range for drum kits (× their own median level).
-const DRUM_SCALE_MIN = 0.4;
-const DRUM_SCALE_MAX = 5.0;
+function median(values) {
+    if (values.length === 0) return 0;
+    values.sort((a, b) => a - b);
+    return values[Math.floor(values.length / 2)];
+}
 
 /**
- * Balance the notes INSIDE each drum kit using the font's own parameters:
- * a drum hit's level = sample peak × initialAttenuation. Each note is scaled
- * toward the kit's median note level (clamped), so a kit whose ride cymbal is
- * encoded 30 dB quieter than its kick (e.g. GeneralUser GS) sounds balanced
- * without touching melodic instruments or assuming any absolute loudness.
+ * Match melodic preset loudness after resolving the SF2 generator stack. A
+ * single multiplier per preset preserves its velocity layers, key ranges and
+ * stereo balance; the ±6 dB limit preserves intentionally soft/loud patches.
  */
-function balanceDrumKits(presetZones, samplePeaks) {
-    for (const pz of presetZones) {
-        if (!(pz.isDrum || pz.bank >= 120)) continue;
+function balancePresetLoudness(presetZones, sampleRms) {
+    const presets = [];
+    for (const preset of presetZones) {
+        preset.balanceGain = 1;
+        if (preset.isDrum || preset.bank >= 120) continue;
 
-        // Group zones by key range — the zones sharing a range are the
-        // velocity/key layers of one drum note.
-        const groups = new Map();
-        for (const z of pz.zones) {
-            const g = z.generators || {};
-            const peak = samplePeaks[z.sampleId] || 0;
-            if (!(peak > 0)) continue;
-            const attenuation = g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1;
-            const key = z.keyRange.join('-');
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push({ z, loudness: peak * attenuation });
+        const levels = [];
+        for (const zone of preset.zones) {
+            const sampleLevel = sampleRms[zone.sampleId] || 0;
+            if (!(sampleLevel > 0)) continue;
+            const generators = zone.generators || {};
+            const attenuation = generators.initialAttenuation_gain != null
+                ? generators.initialAttenuation_gain
+                : 1;
+            levels.push(sampleLevel * attenuation);
         }
+        const level = median(levels);
+        if (level > 0) presets.push({ preset, level });
+    }
 
-        // Note level = median of its velocity layers' loudnesses (the typical
-        // hit level), so multi-layer notes are not inflated by summing layers.
-        const notes = [];
-        for (const zones of groups.values()) {
-            const levels = zones.map(x => x.loudness).sort((a, b) => a - b);
-            notes.push({ zones, level: levels[Math.floor(levels.length / 2)] });
-        }
-        if (notes.length === 0) continue;
-        const medians = notes.map(n => n.level).sort((a, b) => a - b);
-        const kitMedian = medians[Math.floor(medians.length / 2)];
-        if (!(kitMedian > 0)) continue;
-
-        for (const { zones, level } of notes) {
-            const scale = Math.max(DRUM_SCALE_MIN, Math.min(DRUM_SCALE_MAX, kitMedian / level));
-            for (const { z } of zones) z.drumScale = scale;
-        }
+    const target = median(presets.map(({ level }) => level));
+    if (!(target > 0)) return;
+    for (const { preset, level } of presets) {
+        preset.balanceGain = Math.max(PRESET_BALANCE_MIN, Math.min(PRESET_BALANCE_MAX, target / level));
     }
 }
 
@@ -140,8 +101,7 @@ export function loadSF2(ctx, arrayBuffer) {
 
         // Clear any previous cache
         sf2BufferCache.length = 0;
-        const samplePeaks = new Float64Array(sampleHeaders.length);
-
+        const sampleRms = new Float64Array(sampleHeaders.length);
         // Pre-decode every sample into an AudioBuffer
         const paired = new Set();
         for (let i = 0; i < sampleHeaders.length; i++) {
@@ -157,8 +117,7 @@ export function loadSF2(ctx, arrayBuffer) {
                 sf2BufferCache[i] = null;
                 continue;
             }
-            samplePeaks[i] = computePeak(floatSamples);
-
+            sampleRms[i] = computeRms(floatSamples);
             if (paired.has(i)) continue;
 
             let audioBuffer = null;
@@ -169,7 +128,7 @@ export function loadSF2(ctx, arrayBuffer) {
                 const linkedHdr = sampleHeaders[linkedIdx];
                 if (linkedHdr && linkedHdr.sampleRate === shdr.sampleRate) {
                     const floatSamples2 = decodeSF2Sample(sampleData, linkedHdr.start, linkedHdr.end);
-                    samplePeaks[linkedIdx] = computePeak(floatSamples2);
+                    sampleRms[linkedIdx] = computeRms(floatSamples2);
                     const outLen = Math.max(floatSamples.length, floatSamples2.length);
                     audioBuffer = ctx.createBuffer(2, outLen, shdr.sampleRate);
 
@@ -194,10 +153,12 @@ export function loadSF2(ctx, arrayBuffer) {
         }
 
         console.log(`SF2 loaded: ${sampleHeaders.length} samples decoded, ${presetZones.length} presets`);
-        sf2FontGain = computeFontGain(presetZones, samplePeaks);
-        balanceDrumKits(presetZones, samplePeaks);
+        // Preserve encoded attenuation, then apply only bounded per-preset
+        // calibration for inconsistent PCM recording levels within the font.
+        sf2FontGain = 1;
+        balancePresetLoudness(presetZones, sampleRms);
         sf2Data.fontGain = sf2FontGain;
-        console.log(`SF2 volume normalization: fontGain=${sf2FontGain.toFixed(3)}`);
+        console.log('SF2 volume: encoded attenuation + bounded preset balance');
         return true;
     } catch (e) {
         console.error('Failed to parse SF2:', e);
@@ -246,14 +207,12 @@ export function getSF2FontGain() {
 }
 
 /**
- * Helper: convert a legacy 0..127 pan value to -1..1 StereoPanner position.
- * SF2 spec pan is 0..1000 (500 = center); both are handled.
+ * Convert the SF2 signed pan amount (-500..+500, in 0.1% units) to a Web
+ * Audio StereoPanner position (-1..+1).
  */
 export function panToPosition(pan) {
     if (pan == null) return 0;
-    let p = pan;
-    if (p > 127) p = (p / 1000) * 127; // normalize SF2 0..1000 → 0..127
-    return (p / 127) * 2 - 1; // 0..127 → -1..1
+    return pan / 500;
 }
 
 /**
@@ -281,8 +240,8 @@ export function panToPosition(pan) {
  *     filterEnvAmount,  // cents of cutoff modulation from mod env (gen 11)
  *     vibLFO,           // {delay, freqHz, toPitchCents}
  *     modLFO,           // {delay, freqHz, toPitchCents, toFilterFcCents, toVolumeGain}
- *     pan,              // legacy 0..127
- *     pan1000,          // SF2 0..1000
+ *     pan,              // SF2 signed -500..+500
+ *     pan1000,          // alias retaining the SF2 0.1% unit
  *     exclusiveClass,
  *     keyRange, velRange,
  *     sampleName, instrumentName
@@ -445,13 +404,14 @@ function resolveLayerParameters(zone, shdr, sampleId, preset, buffer) {
         toVolumeGain: g.modLFOToVolEnv_gain != null ? g.modLFOToVolEnv_gain : 1,
     };
 
-    // Gain / pan — apply the font-level normalization + per-kit drum balance
-    // on top of the zone's own attenuation.
-    const drumScale = zone.drumScale != null ? zone.drumScale : 1;
-    let gain = (g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1) * sf2FontGain * drumScale;
+    // Gain / pan. initialAttenuation is the fully composed SF2 value from the
+    // preset and instrument layers, converted from centibels to linear gain.
+    // balanceGain is one bounded multiplier per preset, never per sample.
+    const presetBalance = preset && preset.balanceGain != null ? preset.balanceGain : 1;
+    let gain = (g.initialAttenuation_gain != null ? g.initialAttenuation_gain : 1) * presetBalance;
     if (!isFinite(gain) || gain < 0) gain = 0;
-    const pan = g.pan != null ? g.pan : 64;
-    const pan1000 = g.pan1000 != null ? g.pan1000 : 500;
+    const pan = g.pan != null ? g.pan : 0;
+    const pan1000 = g.pan1000 != null ? g.pan1000 : 0;
 
     const instrumentName = preset && preset.name ? preset.name : '';
     const sampleName = shdr.name || '';

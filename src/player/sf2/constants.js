@@ -49,7 +49,7 @@ export const SF2Gen = {
     velocity:                47,
     initialAttenuation:      48,
     reserved2:               49,
-    reserved3:               50,
+    endLoopAddrsCoarseOffset: 50,
     coarseTune:              51,
     fineTune:                52,
     sampleID:                53,

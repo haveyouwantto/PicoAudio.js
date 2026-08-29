@@ -6,9 +6,9 @@
  * understands SF2-specific chunk layouts (shdr/inst/ibag/igen/phdr/pbag/pgen).
  */
 
-import { SF2Gen, signed16 } from './constants.js';
+import { signed16 } from './constants.js';
 import { readString, parseSampleHeaders, parseInstruments, parseBags, parseGenerators, parsePresetHeaders } from './io.js';
-import { buildInstrumentSamples } from './builder.js';
+import { buildInstrumentSamples, parseGeneratorsKV } from './builder.js';
 import { decodeSF2Sample } from './decoder.js';
 import { parseRIFF, findList, readString as riffReadString } from './riff.js';
 
@@ -85,37 +85,29 @@ export function parseSF2(arrayBuffer) {
         const bagEnd = nextBagIndex;
         const isDrum = preset.bank >= 120;
         const zones = [];
+        let globalGenerators = null;
         for (let b = bagStart; b < bagEnd; b++) {
             const bag = presetBags[b];
             const nextBag = (b + 1 < presetBags.length) ? presetBags[b + 1] : null;
             const genStart = bag.genIndex;
             const genEnd = nextBag ? nextBag.genIndex : presetGens.length;
-            let instrumentIndex = -1;
+            const generators = parseGeneratorsKV(presetGens, genStart, genEnd);
+            const instrumentIndex = generators.instrument != null ? generators.instrument : -1;
             let keyRangeLo = 0;
             let keyRangeHi = 127;
             let velRangeLo = 0;
             let velRangeHi = 127;
-            for (let g = genStart; g < genEnd && g < presetGens.length; g++) {
-                const gen = presetGens[g];
-                switch (gen.type) {
-                    case SF2Gen.keyRange:
-                        keyRangeLo = gen.amount & 0xFF;
-                        keyRangeHi = (gen.amount >> 8) & 0xFF;
-                        break;
-                    case SF2Gen.velRange:
-                        velRangeLo = gen.amount & 0xFF;
-                        velRangeHi = (gen.amount >> 8) & 0xFF;
-                        break;
-                    case SF2Gen.instrument:
-                        instrumentIndex = gen.amount;
-                        break;
-                }
-            }
+            if (generators.keyRange) [keyRangeLo, keyRangeHi] = generators.keyRange;
+            if (generators.velRange) [velRangeLo, velRangeHi] = generators.velRange;
             if (instrumentIndex >= 0) {
-                zones.push({ instrumentIndex, zoneBagIndex: b, keyRangeLo, keyRangeHi, velRangeLo, velRangeHi });
+                zones.push({ instrumentIndex, zoneBagIndex: b, keyRangeLo, keyRangeHi, velRangeLo, velRangeHi, generators });
+            } else if (zones.length === 0 && !globalGenerators) {
+                // Per SF2, only the first preset zone may be global (it has no
+                // instrument generator).  Preserve it for later composition.
+                globalGenerators = generators;
             }
         }
-        presets.push({ name: preset.name, program: preset.presetNum, bank: preset.bank, isDrum, zones });
+        presets.push({ name: preset.name, program: preset.presetNum, bank: preset.bank, isDrum, globalGenerators, zones });
     }
 
     return { samples, instruments: instrumentSamples, presets, sampleData, presetBags, presetGens };

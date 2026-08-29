@@ -18,6 +18,11 @@ import { getSF2Layers, panToPosition } from "./sf2-provider.js";
 // Envelope curve sample count for setValueCurveAtTime
 const ENV_CURVE_SAMPLES = 64;
 
+// Calibrate the SF2 output stage against PicoAudio's waveform/buffer modes.
+// This is one global output gain, not a per-font or per-instrument adjustment.
+const SF2_OUTPUT_CALIBRATION = 0.5;
+const PICO_GENERATE_VOLUME_REFERENCE = 0.15;
+
 /**
  * Compute the playback rate multiplier for a given layer & target pitch.
  * Handles root key, coarse/fine tune, sample correction and scale tuning.
@@ -101,7 +106,24 @@ export function renderSF2Note(option) {
     const stop = option.stopTime + songStartTime + baseLatency;
     const isDrum = option.isDrum === true || option.channel === 9;
 
-    const velocity = Math.round((option.velocity || 1) * 127);
+    const velocity = Math.max(0, Math.min(127, Math.round(
+        (Number.isFinite(option.velocity) ? option.velocity : 1) * 127
+    )));
+    // MIDI note-on with velocity zero is a note-off and must not sound.
+    if (velocity === 0) return null;
+
+    // Keep SF2 mode on the same user-visible pre-gain and channel-volume path
+    // as PicoAudio's other sound-quality modes.  The calibration is global so
+    // it cannot change the relative level between SF2 instruments or zones.
+    const configuredGenerateVolume = this.settings && Number.isFinite(this.settings.generateVolume)
+        ? this.settings.generateVolume
+        : PICO_GENERATE_VOLUME_REFERENCE;
+    const channel = Number.isInteger(option.channel) ? option.channel : 0;
+    const channelVolume = this.channels && this.channels[channel] && this.channels[channel][2] != null
+        ? this.channels[channel][2]
+        : 1;
+    const outputGain = SF2_OUTPUT_CALIBRATION *
+        (configuredGenerateVolume / PICO_GENERATE_VOLUME_REFERENCE) * channelVolume;
 
     // Resolve all matched SF2 layers (multi-zone / velocity-layer support)
     const layers = getSF2Layers(option.instrument, option.pitch, velocity, isDrum, option.bank || 0);
@@ -150,6 +172,7 @@ export function renderSF2Note(option) {
             option,
             songStartTime,
             baseLatency,
+            outputGain,
             stopGainNode,
             registerCleanup,
             safeStopAudioNode,
@@ -184,6 +207,7 @@ function buildLayer({
     option,
     songStartTime,
     baseLatency,
+    outputGain,
     stopGainNode,
     registerCleanup,
     safeStopAudioNode,
@@ -248,9 +272,10 @@ function buildLayer({
     // --- per-layer gain (velocity + SF2 attenuation) ---
     const layerGain = context.createGain();
     const sf2Gain = layer.gain != null ? layer.gain : 1;
-    // Velocity response: quadratic (velocity/127)^2, matching the classic
-    // PicoAudio velocity² curve. A linear offset would make soft notes too
-    // loud; a pure quadratic gives the natural soft→loud progression.
+    // Keep the velocity curve consistent with PicoAudio's other renderers.
+    // Full custom SF2 velocity response depends on pmod/imod data, which is
+    // not yet interpreted by this renderer; applying only the default SF2
+    // modulator made normal MIDI tracks substantially less balanced.
     const velNorm = velocity / 127;
     const velGain = velNorm * velNorm;
     let layerLevel = sf2Gain * velGain;
@@ -272,14 +297,13 @@ function buildLayer({
     }
 
     // --- pan ---
-    const panPos = panToPosition(layer.pan != null ? layer.pan : 64);
+    const panPos = panToPosition(layer.pan != null ? layer.pan : 0);
     let panner = null;
     let hasPanner = false;
     if (context.createStereoPanner) {
         panner = context.createStereoPanner();
-        // Clamp to the StereoPannerNode nominal range [-1, 1]. Some fonts store
-        // the pan generator as 0xFFFF (a "not set" marker); panToPosition turns
-        // that into ~15.6, which makes Chrome spam out-of-range warnings.
+        // Clamp malformed pan generator values to StereoPannerNode's nominal
+        // range [-1, 1] and avoid Chrome's out-of-range warnings.
         panner.pan.value = Math.max(-1, Math.min(1, panPos));
         hasPanner = true;
     } else if (context.createPanner) {
@@ -307,10 +331,26 @@ function buildLayer({
     }
     if (hasPanner) {
         layerGain.connect(panner);
-        panner.connect(stopGainNode);
     } else {
-        layerGain.connect(stopGainNode);
+        panner = layerGain;
     }
+
+    // Keep application output controls separate from the layer's SF2 envelope.
+    // That allows expression (CC11 data pre-expanded by PicoAudio) to scale the
+    // complete rendered voice without disturbing attack/decay/release timing.
+    const performanceGain = context.createGain();
+    const baseOutputGain = Math.max(0, Number.isFinite(outputGain) ? outputGain : 1);
+    const expression = option.expression && option.expression.length ? option.expression : null;
+    const initialExpression = expression ? expression[0].value / 127 : 100 / 127;
+    performanceGain.gain.setValueAtTime(baseOutputGain * initialExpression, start);
+    if (expression) {
+        expression.forEach((point) => {
+            const time = Math.max(0, point.time + songStartTime + baseLatency);
+            performanceGain.gain.setValueAtTime(baseOutputGain * (point.value / 127), time);
+        });
+    }
+    panner.connect(performanceGain);
+    performanceGain.connect(stopGainNode);
 
     // --- vibrato / mod LFO / mod-envelope → detune are intentionally NOT
     // connected. The classic PicoAudio SF2 renderer never modulated detune;
@@ -420,9 +460,9 @@ function scheduleVolumeEnvelope({ gainNode, env, start, stop, peak }) {
     param.cancelScheduledValues(0);
 
     // Per-stage exponential time constants (quarter of the stage length).
-    const ATTACK_TC = attack * 0.25;
-    const DECAY_TC = decay * 0.25;
-    const RELEASE_TC = release * 0.25;
+    const ATTACK_TC = attack * 0.1;
+    const DECAY_TC = decay * 0.1;
+    const RELEASE_TC = release * 0.1;
 
     // Delay: silence until attackStart.
     param.setValueAtTime(0, attackStart);

@@ -10,10 +10,17 @@ import { SF2Gen, timecentsToSeconds, centibelsToGain, signed16 } from './constan
  *  - `*_cb`: raw signed centibels
  *  - `*_gain`: centibels converted to linear gain (attenuation)
  *  - ranges (`keyRange`/`velRange`) are [lo, hi] inclusive
- *  - `pan` kept as 0..1000 (SF2 spec) in `pan1000`, `pan` retains legacy 0..127 interpretation
+ *  - `pan` and `pan1000` use the SF2 signed -500..+500 0.1% unit
  */
 export function parseGeneratorsKV(gens, genStart, genEnd) {
     const out = {};
+    // Keep the original generator amounts alongside their convenient derived
+    // values.  The raw representation is needed when a preset zone is composed
+    // with an instrument zone: SF2 adds the two generator amounts before the
+    // unit conversion is applied (for example, 100 cb + 200 cb = 300 cb, not
+    // 10^(-100/200) + 10^(-200/200)).  It is deliberately non-enumerable so it
+    // does not affect diagnostics or zone de-duplication keys.
+    const operatorAmounts = Object.create(null);
     const defaultEnvelopeSeconds = {
         delay: 0,
         attack: 0.001,
@@ -28,6 +35,7 @@ export function parseGeneratorsKV(gens, genStart, genEnd) {
         const t = gen.type;
         const a = gen.amount & 0xFFFF;
         const s = signed16(a);
+        operatorAmounts[t] = { raw: a, signed: s };
 
         switch (t) {
             // --- sample address offsets (sample frames) ---
@@ -38,6 +46,7 @@ export function parseGeneratorsKV(gens, genStart, genEnd) {
             case SF2Gen.startAddrsCoarseOffset:  out.startAddrsCoarseOffset = s; break;
             case SF2Gen.endAddrsCoarseOffset:    out.endAddrsCoarseOffset = s; break;
             case SF2Gen.startLoopAddrsCoarseOffset: out.startLoopAddrsCoarseOffset = s; break;
+            case SF2Gen.endLoopAddrsCoarseOffset: out.endLoopAddrsCoarseOffset = s; break;
 
             // --- pitch / modulation (cents) ---
             case SF2Gen.coarseTune:
@@ -102,9 +111,11 @@ export function parseGeneratorsKV(gens, genStart, genEnd) {
                 out.reverbSend = a; // 0..1000 (0.1% units)
                 break;
             case SF2Gen.pan:
-                // SF2 spec: 0..1000, 500 = center. Legacy files sometimes use 0..127.
-                out.pan1000 = a;
-                out.pan = a > 127 ? Math.round(a / 1000 * 127) : a; // legacy 0..127
+                // SF2 pan is a signed 0.1% offset: -500 = left, 0 = center,
+                // +500 = right.  Keeping the signed value is essential for
+                // a preset-level pan offset to compose correctly.
+                out.pan1000 = s;
+                out.pan = s;
                 break;
             case SF2Gen.initialAttenuation:
                 out.initialAttenuation_cb = s;
@@ -226,6 +237,7 @@ export function parseGeneratorsKV(gens, genStart, genEnd) {
     // Apply SF2 spec defaults for envelope/shaping values if not present.
     // (These defaults are applied at merge time in buildPresetZones for full accuracy.)
     out._defaults = defaultEnvelopeSeconds;
+    Object.defineProperty(out, '_operatorAmounts', { value: operatorAmounts });
     return out;
 }
 
@@ -290,28 +302,96 @@ export function buildInstrumentSamples(instruments, instrumentBags, instrumentGe
 }
 
 /**
- * Merge generator maps in SF2 precedence order (later overrides earlier).
- * Handles timecents-based keynum corrections and envelope defaults.
+ * Merge generator maps in one SF2 hierarchy (global -> local).  A generator
+ * in a local zone replaces the same generator in its global zone; conversion
+ * is then repeated from its raw amount so the derived values stay coherent.
  *
  * @param {...Object|null} genMaps generator maps in increasing precedence
  * @returns {Object} merged generator map
  */
 export function mergeGenerators(...genMaps) {
-    const merged = {};
+    const operatorAmounts = Object.create(null);
     for (const gm of genMaps) {
         if (!gm) continue;
-        for (const [k, v] of Object.entries(gm)) {
-            if (k === '_defaults') continue;
-            merged[k] = v;
+        const amounts = gm._operatorAmounts;
+        if (!amounts) continue;
+        for (const [type, amount] of Object.entries(amounts)) {
+            operatorAmounts[type] = amount;
         }
     }
-    return merged;
+    return parseGeneratorAmounts(operatorAmounts);
+}
+
+/**
+ * Compose the resolved preset generator map with the resolved instrument map.
+ * SF2 §9.4 specifies additive preset/instrument generators, while key and
+ * velocity ranges intersect.  Index, sample and substitution generators are
+ * instrument-only, so a malformed preset-level copy cannot override them.
+ */
+export function combinePresetAndInstrumentGenerators(presetMap, instrumentMap) {
+    const presetAmounts = (presetMap && presetMap._operatorAmounts) || {};
+    const instrumentAmounts = (instrumentMap && instrumentMap._operatorAmounts) || {};
+    const combined = Object.create(null);
+    const types = new Set([...Object.keys(presetAmounts), ...Object.keys(instrumentAmounts)]);
+
+    for (const typeText of types) {
+        const type = Number(typeText);
+        const p = presetAmounts[type];
+        const i = instrumentAmounts[type];
+
+        if (type === SF2Gen.instrument) continue;
+
+        if (type === SF2Gen.keyRange || type === SF2Gen.velRange) {
+            const pRange = p ? unpackRange(p.raw) : [0, 127];
+            const iRange = i ? unpackRange(i.raw) : [0, 127];
+            combined[type] = {
+                raw: packRange(Math.max(pRange[0], iRange[0]), Math.min(pRange[1], iRange[1])),
+                signed: 0,
+            };
+            continue;
+        }
+
+        // These generators select or replace sample-level state and are not
+        // legal at the preset level.  Preserve the instrument value only.
+        if (type === SF2Gen.sampleID || type === SF2Gen.sampleModes ||
+            type === SF2Gen.exclusiveClass || type === SF2Gen.overridingRootKey ||
+            type === SF2Gen.keynum || type === SF2Gen.velocity) {
+            if (i) combined[type] = i;
+            continue;
+        }
+
+        // All remaining legal generator amounts are perceptually additive
+        // across preset and instrument layers.  Their signed 16-bit units are
+        // summed before parseGeneratorsKV converts them into gain/time/Hz.
+        const total = (p ? p.signed : 0) + (i ? i.signed : 0);
+        combined[type] = { raw: total & 0xFFFF, signed: total };
+    }
+
+    return parseGeneratorAmounts(combined);
+}
+
+function parseGeneratorAmounts(operatorAmounts) {
+    const records = Object.entries(operatorAmounts).map(([type, amount]) => ({
+        type: Number(type),
+        amount: amount.raw & 0xFFFF,
+    }));
+    return parseGeneratorsKV(records, 0, records.length);
+}
+
+function unpackRange(raw) {
+    return [raw & 0xFF, (raw >> 8) & 0xFF];
+}
+
+function packRange(lo, hi) {
+    return (Math.max(0, Math.min(127, lo)) & 0xFF) |
+        ((Math.max(0, Math.min(127, hi)) & 0xFF) << 8);
 }
 
 /**
  * Build complete preset zone list. For every preset zone, resolve the
  * referenced instrument and merge:
- *   preset-zone generators  →  instrument global generators  →  instrument-zone generators
+ *   preset global -> preset zone (override), instrument global -> instrument
+ *   zone (override), then preset + instrument (additive)
  * This produces fully-resolved zones ready for rendering (multiple zones per
  * key can overlap — renderers should play all matching zones).
  *
@@ -338,48 +418,25 @@ export function buildPresetZones(presets, presetBags, presetGens, instruments, s
             const inst = instruments[zone.instrumentIndex];
             if (!inst) continue;
 
-            // NOTE: preset-level generator records (keyRange, overridingRootKey,
-            // scaleTuning, etc.) are intentionally NOT merged here. The original
-            // PicoAudio SF2 provider only merged instrument-global + instrument-zone
-            // generators; merging preset-zone generators changed tuning/selection
-            // for some instruments. Keep this behavior aligned with the classic
-            // renderer for correct pitch and zone selection.
-
-            // Preset-zone key/velocity windows: instrument zones are clipped to
-            // the preset zone's ranges per the SF2 spec (a note outside the
-            // preset zone's window must not trigger its instrument zones).
-            const presetKeyRange = (zone.keyRangeLo != null || zone.keyRangeHi != null)
-                ? [zone.keyRangeLo || 0, zone.keyRangeHi != null ? zone.keyRangeHi : 127]
-                : null;
-            const presetVelRange = (zone.velRangeLo != null || zone.velRangeHi != null)
-                ? [zone.velRangeLo || 0, zone.velRangeHi != null ? zone.velRangeHi : 127]
-                : null;
+            // A preset global zone supplies defaults to its local zones.  The
+            // parser attaches parsed local generators; the range fallback keeps
+            // this builder compatible with callers using the older shell shape.
+            const presetLocal = zone.generators || makeRangeGeneratorMap(zone);
+            const presetGenerators = mergeGenerators(preset.globalGenerators, presetLocal);
 
             for (const sample of inst.samples) {
                 if (sample.sampleId == null || sample.sampleId < 0 || sample.sampleId >= sampleHeaders.length) continue;
 
-                const merged = mergeGenerators(
+                const instrumentGenerators = mergeGenerators(
                     inst.generators, // instrument global
                     sample.generators, // instrument zone
                 );
+                const merged = combinePresetAndInstrumentGenerators(presetGenerators, instrumentGenerators);
 
                 // Default key/vel range if not specified anywhere
                 if (!merged.keyRange) merged.keyRange = [0, 127];
                 if (!merged.velRange) merged.velRange = [0, 127];
 
-                // Clip to the preset zone's window
-                if (presetKeyRange) {
-                    merged.keyRange = [
-                        Math.max(merged.keyRange[0], presetKeyRange[0]),
-                        Math.min(merged.keyRange[1], presetKeyRange[1]),
-                    ];
-                }
-                if (presetVelRange) {
-                    merged.velRange = [
-                        Math.max(merged.velRange[0], presetVelRange[0]),
-                        Math.min(merged.velRange[1], presetVelRange[1]),
-                    ];
-                }
                 if (merged.keyRange[0] > merged.keyRange[1]) continue;
                 if (merged.velRange[0] > merged.velRange[1]) continue;
 
@@ -409,4 +466,21 @@ export function buildPresetZones(presets, presetBags, presetGens, instruments, s
     return result;
 }
 
-export default { parseGeneratorsKV, buildInstrumentSamples, buildPresetZones, mergeGenerators };
+function makeRangeGeneratorMap(zone) {
+    const records = [];
+    if (zone.keyRangeLo != null || zone.keyRangeHi != null) {
+        records.push({
+            type: SF2Gen.keyRange,
+            amount: packRange(zone.keyRangeLo || 0, zone.keyRangeHi != null ? zone.keyRangeHi : 127),
+        });
+    }
+    if (zone.velRangeLo != null || zone.velRangeHi != null) {
+        records.push({
+            type: SF2Gen.velRange,
+            amount: packRange(zone.velRangeLo || 0, zone.velRangeHi != null ? zone.velRangeHi : 127),
+        });
+    }
+    return parseGeneratorsKV(records, 0, records.length);
+}
+
+export default { parseGeneratorsKV, buildInstrumentSamples, buildPresetZones, mergeGenerators, combinePresetAndInstrumentGenerators };
