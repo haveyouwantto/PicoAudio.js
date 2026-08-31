@@ -312,7 +312,7 @@ export function getSF2Layers(program, pitch, velocity = 100, isDrum = false, ban
             const buffer = sf2BufferCache[sampleId];
             if (!buffer) continue;
 
-            const layer = resolveLayerParameters(zone, shdr, sampleId, pz, buffer);
+            const layer = resolveLayerParameters(zone, shdr, sampleId, pz, buffer, pitch);
             if (layer) layers.push(layer);
         }
     }
@@ -330,8 +330,15 @@ export function getSF2Layers(program, pitch, velocity = 100, isDrum = false, ban
 
 /**
  * Resolve the full parameter set for a single matched zone.
+ * @param {Object} zone
+ * @param {Object} shdr
+ * @param {number} sampleId
+ * @param {Object} preset
+ * @param {AudioBuffer} buffer
+ * @param {number} pitch - MIDI note being played (keynum envelope scaling uses
+ *                         the played key relative to MIDI key 60)
  */
-function resolveLayerParameters(zone, shdr, sampleId, preset, buffer) {
+function resolveLayerParameters(zone, shdr, sampleId, preset, buffer, pitch) {
     const g = zone.generators || {};
 
     // Sample address offsets (sample frames), applied to the header boundaries
@@ -351,9 +358,13 @@ function resolveLayerParameters(zone, shdr, sampleId, preset, buffer) {
     const rootKey = (g.rootKey != null && g.rootKey > 0) ? g.rootKey : shdr.originalKey;
     const correction = shdr.correction || 0;
 
-    // Volume envelope with keynum-based time correction (gen 39/40)
-    // keyNumToVolEnvHold/Decay are timecents per keynum relative to middle C (60).
-    const keyNumDiff = rootKey - 60;
+    // Volume envelope with keynum-based time correction (gen 39/40).
+    // keyNumToVolEnvHold/Decay are timecents PER KEY relative to MIDI key 60,
+    // and they INCREMENT the base envelope time — they do not replace it:
+    //   timecents(key) = baseTimecents + gen39/40 * (pitch - 60)
+    // Replacing the base value collapsed long decays to a couple of seconds
+    // (RLNDGM piano decay 13.7s -> 1.26s), making notes die almost instantly.
+    const keyNumDiff = pitch - 60;
     const env = {
         delay:   g.delayVolEnv   != null ? g.delayVolEnv   : 0,
         attack:  g.attackVolEnv  != null ? g.attackVolEnv  : 0.001,
@@ -362,12 +373,13 @@ function resolveLayerParameters(zone, shdr, sampleId, preset, buffer) {
         sustain: Math.max(0, Math.min(1, g.sustainVolEnv != null ? g.sustainVolEnv : 1.0)),
         release: g.releaseVolEnv != null ? g.releaseVolEnv : 0.01,
     };
-    // Keynum scaling: timecents per keynum * (root - 60)
     if (g.keyNumToVolEnvHold != null) {
-        env.hold = Math.max(0, timecentsToSecondsSafe(g.keyNumToVolEnvHold * keyNumDiff));
+        const baseHoldTc = g.holdVolEnv_timecents != null ? g.holdVolEnv_timecents : 0;
+        env.hold = Math.max(0, timecentsToSecondsSafe(baseHoldTc + g.keyNumToVolEnvHold * keyNumDiff));
     }
     if (g.keyNumToVolEnvDecay != null) {
-        env.decay = Math.max(0.001, timecentsToSecondsSafe(g.keyNumToVolEnvDecay * keyNumDiff));
+        const baseDecayTc = g.decayVolEnv_timecents != null ? g.decayVolEnv_timecents : 0;
+        env.decay = Math.max(0.001, timecentsToSecondsSafe(baseDecayTc + g.keyNumToVolEnvDecay * keyNumDiff));
     }
 
     // Modulation envelope with keynum corrections (gen 31/32)
@@ -380,10 +392,12 @@ function resolveLayerParameters(zone, shdr, sampleId, preset, buffer) {
         release: g.releaseModEnv_seconds != null ? g.releaseModEnv_seconds : 0.01,
     };
     if (g.keyNumToModEnvHold != null) {
-        modEnv.hold = Math.max(0, timecentsToSecondsSafe(g.keyNumToModEnvHold * keyNumDiff));
+        const baseHoldTc = g.holdModEnv_timecents != null ? g.holdModEnv_timecents : 0;
+        modEnv.hold = Math.max(0, timecentsToSecondsSafe(baseHoldTc + g.keyNumToModEnvHold * keyNumDiff));
     }
     if (g.keyNumToModEnvDecay != null) {
-        modEnv.decay = Math.max(0.001, timecentsToSecondsSafe(g.keyNumToModEnvDecay * keyNumDiff));
+        const baseDecayTc = g.decayModEnv_timecents != null ? g.decayModEnv_timecents : 0;
+        modEnv.decay = Math.max(0.001, timecentsToSecondsSafe(baseDecayTc + g.keyNumToModEnvDecay * keyNumDiff));
     }
 
     // Initial filter (default: no filtering → 20kHz)

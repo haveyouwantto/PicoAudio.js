@@ -428,9 +428,12 @@ function buildLayer({
         }
     }
 
-    // Stop the source after the note ends (release time accounted below).
+    // Stop the source after the release has effectively completed (~5 time
+    // constants). Keeping the source alive through the release lets the loop
+    // tail decay smoothly instead of being hard-cut (the old fixed 1s cap
+    // truncated long-release fonts mid-tail and caused a click).
     const releaseTime = Math.max(0, env.release || 0);
-    const stopSourceTime = stop + Math.min(releaseTime, 1.0);
+    const stopSourceTime = stop + Math.max(releaseTime * 0.5, 0.05);
     safeStopAudioNode(source, stopSourceTime);
 
     return true;
@@ -459,7 +462,7 @@ function scheduleVolumeEnvelope({ gainNode, env, start, stop, peak }) {
     const param = gainNode.gain;
     param.cancelScheduledValues(0);
 
-    // Per-stage exponential time constants (quarter of the stage length).
+    // Per-stage exponential time constants.
     const ATTACK_TC = attack * 0.1;
     const DECAY_TC = decay * 0.1;
     const RELEASE_TC = release * 0.1;
