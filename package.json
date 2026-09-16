@@ -1,6 +1,6 @@
 {
-  "name": "picoaudio",
-  "version": "2.0",
+  "name": "@maple-kaede/picoaudio",
+  "version": "2.0.0",
   "description": "PicoAudio.js is light MIDI player using Web Audio API",
   "main": "dist/nodejs/picoaudio.js",
   "module": "dist/nodejs/picoaudio.mjs",
@@ -16,12 +16,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cagpie/PicoAudio.js.git"
+    "url": "git+https://github.com/haveyouwantto/PicoAudio.js.git"
   },
   "bugs": {
-    "url": "https://github.com/cagpie/PicoAudio.js/issues"
+    "url": "https://github.com/haveyouwantto/PicoAudio.js/issues"
   },
-  "homepage": "https://github.com/cagpie/PicoAudio.js#readme",
+  "homepage": "https://github.com/haveyouwantto/PicoAudio.js#readme",
   "keywords": [
     "midi",
     "smf",
@@ -31,7 +31,7 @@
     "web midi api",
     "web-midi-api"
   ],
-  "author": "cagpie <cagpie@gmail.com>",
+  "author": "Maple-Kaede <haveyouwantto@gmail.com>",
   "license": "MIT",
   "devDependencies": {
     "@babel/core": "^7.11.1",
