@@ -334,6 +334,7 @@ export default function createNote(option) {
 
                 gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
                 if (filter) {
+                    filter.Q.value = -3;
                     filter.frequency.setValueAtTime(filterStart, note.start + attackClamped);
                     filter.frequency.setTargetAtTime(filterTarget, note.start + attackClamped, filterDecay);
                 }
