@@ -1,31 +1,46 @@
 /**
- * SF2 Renderer — Web Audio graph edition (experimental, step 1)
+ * SF2 Renderer — Web Audio graph edition
  *
  * Same SoundFont data as the TinySoundFont port (regions, envelopes, filter,
- * pan law and gains all come from tsf-font/tsf-synth), but the synthesis itself
- * is handed to native Web Audio nodes instead of a JavaScript sample loop:
+ * pan law and gains all come from tsf-font/tsf-synth), but the synthesis is
+ * handed to native Web Audio nodes instead of a JavaScript sample loop:
  *
- *   BufferSource (pitch, loop) -> [BiquadFilter] -> envelope gain
- *      -> pan gains (the SF2 sqrt law) -> ChannelMerger -> expression gain
+ *   BufferSource (pitch, loop) -> [BiquadFilter] -> [volume LFO]
+ *      -> pan gains, each carrying the amplitude envelope
+ *      -> ChannelMerger -> expression / channel gain -> master
  *
- * The point is main thread cost: the DSP version spends ~1-3ms of JavaScript
- * per note rendering PCM, this one only schedules nodes and automation
- * (tens of microseconds), and the audio thread does the work natively - the
- * same trade the previous Web Audio based renderer made, but now driven by the
- * region/envelope/gain data we validated against TinySoundFont.
+ * The point is main thread cost: the DSP version spends milliseconds of
+ * JavaScript per note synthesising PCM, this one only schedules nodes and
+ * automation (a fraction of that), and the audio thread does the work.
  *
- * Known differences to the DSP version (all deliberate, measured by
- * scripts/sf2-engine-ab.mjs):
- *   - resampling is the browser's (windowed sinc) instead of linear
- *   - envelopes are continuous instead of quantised to 64 sample blocks
- *   - mod LFO -> filter cutoff uses a small signal Hz approximation
+ * Keeping the output *equal* to the DSP version is the hard part, so every
+ * piece of the graph mirrors tsf.h exactly:
+ *   - the amplitude envelope is written as tsf's segments (linear attack,
+ *     hold, exponential decay shortened to the sustain level, exponential
+ *     release with the same -9.226 constant), and a note off always gets an
+ *     explicit value event so a long hold cannot silently become a decay
+ *   - the modulation envelope is piecewise *linear* in cents (tsf's mod env
+ *     has a linear attack/decay and a linear release to zero), written as
+ *     ramps - not as a sampled curve, which quantised fast segments
+ *   - mod env / LFO to pitch and cutoff drive AudioParams that already take
+ *     cents (source.detune, filter.detune), so no Hz approximation is needed
+ *   - the LFO rate generator is a rate in cents relative to 8.176 Hz
+ *     (tsf_cents2hertz), not a period in timecents
+ *   - mod LFO to volume becomes an exponential (wave-shaper) gain factor,
+ *     matching tsf's decibelsToGain(noteGainDB + level * amount)
+ *   - a filter that tsf would bypass (cutoff generator >= 13500 cents, or a
+ *     cutoff at/above 0.499 of the sample rate) is left out of the graph
+ *   - the pan law is tsf's sqrt(0.5 -/+ pan) per channel
+ *
+ * Known differences that remain (measurable with scripts/sf2-program-sweep.mjs
+ * and scripts/browser-bench.mjs): resampling is the browser's rather than
+ * linear, and the filter is a biquad of the same order but with Chrome's own
+ * coefficient handling near the cutoff.
  */
 
 import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
-import {
-    noteOnVoices,
-} from "../sf2/tsf-synth.js";
-import { tsfTimecents2Secs, tsfCents2Hertz, tsfDecibelsToGain } from "../sf2/tsf-font.js";
+import { noteOnVoices } from "../sf2/tsf-synth.js";
+import { tsfCents2Hertz, tsfDecibelsToGain } from "../sf2/tsf-font.js";
 
 /** App level trim, same value as the DSP renderer. */
 const SF2_OUTPUT_TRIM_DB = -12;
@@ -36,6 +51,12 @@ const PICO_GENERATE_VOLUME_REFERENCE = 0.15;
 const TSF_ENVELOPE_SLOPE = 9.226;
 /** Release used when the font asks for none (tsf.h: TSF_FASTRELEASETIME). */
 const TSF_FAST_RELEASE = 0.01;
+/** tsf.h: a cutoff generator at or above this is the "no filter" default. */
+const TSF_FILTER_BYPASS_CENTS = 13500;
+/** tsf.h: the lowpass only runs below 0.499 of the output sample rate. */
+const TSF_MAX_FILTER_RATIO = 0.499;
+/** Gain floors only guard the exponential ramps; both are far below audibility. */
+const GAIN_FLOOR = 1e-9;
 
 /** Decoded sample slices, per AudioContext (offline contexts are separate). */
 const sampleBufferCache = new WeakMap();
@@ -57,7 +78,7 @@ function getSampleBuffer(context, font, sampleId) {
 }
 
 /**
- * Schedule TSF's volume envelope on a gain parameter.
+ * Schedule TSF's amplitude envelope on a gain parameter.
  *
  * delay -> attack (linear, like tsf's slope) -> hold -> decay (exponential,
  * shortened like tsf does so that it lands on the sustain level) -> release
@@ -67,6 +88,9 @@ function getSampleBuffer(context, font, sampleId) {
  * segments are pure exponentials (level *= exp(-9.226/T) per sample) and an
  * exponentialRamp is exactly that shape, which also keeps the automation
  * deterministic when the note off interrupts a segment.
+ *
+ * `peak` is the level the envelope reaches, i.e. already scaled by the note
+ * gain and by the voice's pan factor when the caller folds the two together.
  */
 function scheduleAmpEnvelope(param, env, start, stop, peak) {
     const delay = Math.max(0, env.delay || 0);
@@ -78,69 +102,160 @@ function scheduleAmpEnvelope(param, env, start, stop, peak) {
 
     const attackStart = start + delay;
     const attackEnd = attackStart + attack;
-    // tsf.h: with a sustain level the decay segment is shortened so the
-    // exponential reaches that level exactly (log(sustain) / mysterySlope).
-    const decaySpan = (sustain > 0 && sustain < 1) ? decay * (Math.log(sustain) / -TSF_ENVELOPE_SLOPE) : decay;
     const holdEnd = attackEnd + hold;
+    // tsf.h: the decay segment is an exponential whose time constant is the
+    // *whole* decay time (slope = exp(-9.226 / (decay * sampleRate))); the
+    // segment is only shortened so that it lands exactly on the sustain level
+    // (log(sustain) / mysterySlope). Using the shortened span as the time
+    // constant as well made every 0 < sustain < 1 preset decay far too fast.
+    const decaySpan = sustain >= 1 ? 0
+        : sustain > 0 ? decay * (Math.log(sustain) / -TSF_ENVELOPE_SLOPE)
+            : decay;
     const decayEnd = holdEnd + decaySpan;
     // where the exponential decay lands (tsf's segments decay through ~1e-4)
-    const decayFloor = sustain > 0 ? sustain : 1e-4;
-    const gain = Math.max(peak, 1e-7);
+    const decayFloor = sustain > 0 ? sustain : Math.exp(-TSF_ENVELOPE_SLOPE);
+    const gain = Math.max(peak, GAIN_FLOOR);
+    // tsf walks its segments in order and skips the zero length ones, so an
+    // envelope with no delay/attack/hold/decay sits at the *sustain* level -
+    // jumping to full level instead made those voices play at the wrong gain.
+    const initialLevel = attack > 0 ? 0 : (hold > 0 || decaySpan > 0 ? 1 : sustain);
 
     /** Envelope level (0..1) at time t, for truncating at the note off. */
     const levelAt = (t) => {
         if (t <= attackStart) return 0;
         if (t < attackEnd) return attack > 0 ? (t - attackStart) / attack : 1;
         if (t < holdEnd) return 1;
-        if (decaySpan > 0 && t < decayEnd) {
-            return decayFloor + (1 - decayFloor) * Math.exp(-TSF_ENVELOPE_SLOPE * ((t - holdEnd) / decaySpan));
+        if (decay > 0 && decaySpan > 0 && t < decayEnd) {
+            return Math.exp(-TSF_ENVELOPE_SLOPE * ((t - holdEnd) / decay));
         }
         return decayFloor;
     };
 
-    // A ramp is defined between the event before it and its own end time, so a
-    // release event placed before the decay ramp's end would silently move that
-    // ramp's start - the decay has to be written only up to the note off.
+    // A ramp is defined between the event before it and its own end time, so
+    // every segment the note off cuts short needs an explicit value event at
+    // the note off. Without one the release ramp starts at the previous event
+    // instead: with a hold longer than the note that turned the whole hold into
+    // an exponential decay (the graph lost ~15 dB/s where tsf holds flat), and
+    // a release before the decay's end would silently move the decay's start.
     const releaseStart = Math.max(stop, start);
-    const decayEndClamped = Math.min(decayEnd, releaseStart);
+    const releaseLevel = Math.max(levelAt(releaseStart) * gain, GAIN_FLOOR);
 
     param.cancelScheduledValues(start);
     param.setValueAtTime(0, start);
-    if (delay > 0) param.setValueAtTime(0, attackStart);
-    if (attack > 0) param.linearRampToValueAtTime(gain, Math.min(attackEnd, releaseStart));
-    else param.setValueAtTime(gain, Math.min(attackStart, releaseStart));
-    if (hold > 0 && holdEnd < releaseStart) param.setValueAtTime(gain, holdEnd);
-    // exponential ramp = tsf's level *= exp(-9.226 / samples) per sample segment
-    if (decaySpan > 0 && decayEndClamped > holdEnd) {
-        param.exponentialRampToValueAtTime(Math.max(gain * levelAt(decayEndClamped), 1e-6), decayEndClamped);
+    let lastEvent = start;
+    if (delay > 0) { param.setValueAtTime(0, attackStart); lastEvent = attackStart; }
+
+    // attack, truncated at the note off with the level reached there
+    if (releaseStart > attackStart) {
+        const attackStop = Math.min(attackEnd, releaseStart);
+        if (attack > 0) {
+            param.linearRampToValueAtTime(gain * ((attackStop - attackStart) / attack), attackStop);
+            lastEvent = attackStop;
+        } else {
+            param.setValueAtTime(gain * initialLevel, attackStart);
+            lastEvent = attackStart;
+        }
     }
+
+    // hold: an explicit value event so the decay ramp starts where tsf's does
+    if (hold > 0 && holdEnd < releaseStart) { param.setValueAtTime(gain, holdEnd); lastEvent = holdEnd; }
+
+    // A zero length decay segment is skipped, so tsf drops to the sustain level
+    // as soon as the hold/attack is over. Missing that step left every
+    // "attack, then hold, then sustain" patch (Drawbar Organ, Synth Brass 2,
+    // Fifth Sawtooth Wave in FluidR3) exactly 20*log10(1/sustain) dB too loud.
+    if (decaySpan <= 0 && sustain < 1 && holdEnd < releaseStart) {
+        param.setValueAtTime(gain * sustain, holdEnd);
+        lastEvent = holdEnd;
+    }
+
+    // exponential ramp = tsf's level *= exp(-9.226 / samples) per sample segment
+    const decayEndClamped = Math.min(decayEnd, releaseStart);
+    if (decaySpan > 0 && decayEndClamped > holdEnd) {
+        param.exponentialRampToValueAtTime(gain * levelAt(decayEndClamped), decayEndClamped);
+        lastEvent = decayEndClamped;
+    }
+
     // Release: from the level reached at the note off down by the same -9.226
     // factor over `release` seconds (tsf's release segment).
-    const releaseLevel = Math.max(levelAt(releaseStart) * gain, 1e-7);
-    if (releaseStart > decayEndClamped) param.setValueAtTime(releaseLevel, releaseStart);
-    param.exponentialRampToValueAtTime(Math.max(releaseLevel * 1e-4, 1e-7), releaseStart + release);
+    if (releaseStart > lastEvent) param.setValueAtTime(releaseLevel, releaseStart);
+    param.exponentialRampToValueAtTime(releaseLevel * Math.exp(-TSF_ENVELOPE_SLOPE), releaseStart + release);
 }
 
-/** Modulation envelope level (0..1) sampled into a curve, like the DSP computes it. */
-function buildModEnvCurve(env, duration, samples = 32) {
-    const curve = new Float32Array(samples);
+/**
+ * Schedule TSF's modulation envelope as ramps of `amount * level`.
+ *
+ * tsf's modulation envelope is linear everywhere except that the attack is
+ * scaled by velocity, and the release ramps the level down to zero. Because
+ * the targets are AudioParams that take cents (source.detune, filter.detune,
+ * and the filter cutoff in cents) the trajectory is *exactly* proportional to
+ * the level, so plain ramps reproduce it - sampling it into a curve instead
+ * quantised the fast segments (a 64 point curve over an 8 second span cannot
+ * represent a 2 ms attack) and left the slow tail held instead of decaying.
+ */
+function scheduleModEnvelope(param, env, amount, start, stop, midiVelocity) {
     const delay = Math.max(0, env.delay || 0);
-    const attack = Math.max(0, env.attack || 0);
+    // tsf.h: the modulation envelope attack scales with velocity.
+    const attack = Math.max(0, env.attack || 0) * ((145 - midiVelocity) / 144);
     const hold = Math.max(0, env.hold || 0);
     const decay = Math.max(0, env.decay || 0);
     const sustain = Math.max(0, Math.min(1, env.sustain != null ? env.sustain : 1));
-    const attackEnd = delay + attack;
-    const decayEnd = attackEnd + hold + decay;
-    for (let i = 0; i < samples; i++) {
-        const t = (i / (samples - 1)) * duration;
-        let level;
-        if (t <= delay) level = 0;
-        else if (t < attackEnd) level = attack > 0 ? (t - delay) / attack : 1;
-        else if (t < decayEnd) level = sustain + (1 - sustain) * Math.exp(-TSF_ENVELOPE_SLOPE * ((t - attackEnd) / Math.max(decay, 1e-6)));
-        else level = sustain;
-        curve[i] = level;
+    const release = Math.max(0, env.release || 0);
+
+    const attackStart = start + delay;
+    const attackEnd = attackStart + attack;
+    const holdEnd = attackEnd + hold;
+    // tsf.h: the mod env decay is linear over decay * (1 - sustain).
+    const decaySpan = decay * (1 - sustain);
+    const decayEnd = holdEnd + decaySpan;
+    // tsf skips the zero length segments: without an attack/hold/decay the
+    // modulation level is the sustain level (often 0, i.e. no modulation)
+    const initialLevel = attack > 0 ? 0 : (hold > 0 || decaySpan > 0 ? 1 : sustain);
+
+    const levelAt = (t) => {
+        if (t <= attackStart) return 0;
+        if (t < attackEnd) return attack > 0 ? (t - attackStart) / attack : 1;
+        if (t < holdEnd) return 1;
+        if (decaySpan > 0 && t < decayEnd) return 1 - ((t - holdEnd) / decaySpan) * (1 - sustain);
+        return sustain;
+    };
+
+    const releaseStart = Math.max(stop, start);
+    const releaseLevel = levelAt(releaseStart);
+
+    param.cancelScheduledValues(start);
+    param.setValueAtTime(0, start);
+    let lastEvent = start;
+    if (delay > 0) { param.setValueAtTime(0, attackStart); lastEvent = attackStart; }
+
+    if (releaseStart > attackStart) {
+        const attackStop = Math.min(attackEnd, releaseStart);
+        if (attack > 0) {
+            param.linearRampToValueAtTime(amount * ((attackStop - attackStart) / attack), attackStop);
+            lastEvent = attackStop;
+        } else {
+            param.setValueAtTime(amount * initialLevel, attackStart);
+            lastEvent = attackStart;
+        }
     }
-    return curve;
+    if (hold > 0 && holdEnd < releaseStart) { param.setValueAtTime(amount, holdEnd); lastEvent = holdEnd; }
+
+    // tsf skips a zero length decay segment: the level drops to sustain right
+    // after the attack/hold (see the amplitude envelope for the same rule)
+    if (decaySpan <= 0 && sustain < 1 && holdEnd < releaseStart) {
+        param.setValueAtTime(amount * sustain, holdEnd);
+        lastEvent = holdEnd;
+    }
+
+    const decayStop = Math.min(decayEnd, releaseStart);
+    if (decaySpan > 0 && decayStop > holdEnd) {
+        param.linearRampToValueAtTime(amount * levelAt(decayStop), decayStop);
+        lastEvent = decayStop;
+    }
+
+    // tsf.h: the mod env release is linear from the current level to zero.
+    if (releaseStart > lastEvent) param.setValueAtTime(amount * releaseLevel, releaseStart);
+    if (release > 0) param.linearRampToValueAtTime(0, releaseStart + release);
 }
 
 /**
@@ -172,6 +287,9 @@ export function renderSF2NoteWebAudio(option) {
     if (!voices.length) return null;
 
     const sampleRate = context.sampleRate || 44100;
+    const nyquist = sampleRate * 0.5;
+    // tsf.h: the lowpass is only ever applied below 0.499 of the output rate.
+    const maxFilterHz = Math.min(nyquist * 0.998, sampleRate * TSF_MAX_FILTER_RATIO);
 
     // Same output stage as the DSP renderer: user volume, channel volume,
     // ((CC7 * CC11))^3 channel gain and the -12 dB calibration.
@@ -188,11 +306,9 @@ export function renderSF2NoteWebAudio(option) {
     const midiExpression = Number.isFinite(option.midiExpression) ? option.midiExpression : 127;
     const channelGain = (expression01) => Math.pow(midiVolume * expression01, 3);
 
-    const stopGainNode = context.createGain();
-    stopGainNode.gain.value = 1;
-    if (this.masterGainNode) stopGainNode.connect(this.masterGainNode);
-    else if (context.destination) stopGainNode.connect(context.destination);
-
+    // One gain per note carries the user/channel/expression gain *and* acts as
+    // the universal mute the player's stop function uses (that used to be a
+    // second GainNode per note).
     const performanceGain = context.createGain();
     const expression = option.expression && option.expression.length ? option.expression : null;
     const initialExpression = expression ? expression[0].value / 127 : midiExpression / 127;
@@ -203,7 +319,8 @@ export function renderSF2NoteWebAudio(option) {
             performanceGain.gain.setValueAtTime(userGain * channelGain(point.value / 127), time);
         });
     }
-    performanceGain.connect(stopGainNode);
+    if (this.masterGainNode) performanceGain.connect(this.masterGainNode);
+    else if (context.destination) performanceGain.connect(context.destination);
 
     // pitch wheel: tsf applies it as extra semitones on the pitch ratio
     const pitchBends = (option.pitchBend && option.pitchBend.length)
@@ -212,22 +329,38 @@ export function renderSF2NoteWebAudio(option) {
             semitones: p.value,
         }))
         : null;
+    // CC10 pan moves both pan factors like tsf_channel_set_pan; it forces the
+    // two gain stereo path below (the single gain path assumes a fixed pan).
+    const panChanges = (option.pan && option.pan.length) ? option.pan : null;
 
     const nodes = [];          // every node of this note, for the stop function
+    const timers = [];         // e.g. stopping a sustain loop at note off
     let startedAny = false;
-    let maxEnd = start;
     let activeVoices = 0;
     let noteReleased = false;
 
+    // Shared stereo stage: every voice's pan gains land here. It is only built
+    // when a voice actually needs two channels (a centred voice does not).
+    let merger = null;
+    const getMerger = () => {
+        if (!merger) {
+            merger = context.createChannelMerger(2);
+            merger.connect(performanceGain);
+            nodes.push(merger);
+        }
+        return merger;
+    };
+
     // The note's own gain nodes have to leave the graph when the audio is over:
     // notes that end on their own are only dropped from the player's stop list,
-    // their stop function is never called (this is the same leak the DSP
-    // renderer had).
+    // their stop function is never called.
     const releaseNoteGraph = () => {
         if (noteReleased) return;
         noteReleased = true;
+        for (const t of timers) clearTimeout(t);
+        timers.length = 0;
+        if (merger) { try { merger.disconnect(); } catch (e) { /* noop */ } }
         try { performanceGain.disconnect(); } catch (e) { /* noop */ }
-        try { stopGainNode.disconnect(); } catch (e) { /* noop */ }
     };
 
     for (const voice of voices) {
@@ -249,8 +382,7 @@ export function renderSF2NoteWebAudio(option) {
         // context itself), so the sample rate factor has to come back out -
         // otherwise every sample that is not recorded at the context rate plays
         // an octave (or more) off.
-        const rate = tsfTimecents2Secs(voice.pitchInputTimecents) * voice.pitchOutputFactor
-            * (sampleRate / shdr.sampleRate);
+        const rate = tsfTimecentsToRate(voice) * (sampleRate / shdr.sampleRate);
         source.playbackRate.value = rate;
         if (pitchBends) {
             pitchBends.forEach((p) => {
@@ -267,39 +399,64 @@ export function renderSF2NoteWebAudio(option) {
             if (source.loopEnd <= source.loopStart) source.loopEnd = buffer.duration;
         }
 
-        // filter (tsf: cutoff 13500 cents means "no filter")
+        // --- filter ------------------------------------------------------
+        // tsf only runs the lowpass while the modulated cutoff stays below the
+        // 13500 cent "no filter" default; above that it drops the filter
+        // entirely. Regions that can only ever be above it get no node at all
+        // (GeneralUser GS has thousands of them), and the modulated cutoff is
+        // clamped so the biquad never runs past the range tsf would use.
+        const modEnv = voice.modenv.parameters;
+        const envFilterCents = region.modEnvToFilterFc || 0;
+        const lfoFilterCents = region.modLfoToFilterFc || 0;
+        // lowest cutoff the modulation can ask for: tsf evaluates
+        // fres = initialFilterFc + lfoLevel * lfoAmount + envLevel * envAmount
+        // with both levels reaching +-1 / 0..1
+        const minFilterCents = region.initialFilterFc
+            + Math.min(0, envFilterCents) + Math.min(0, lfoFilterCents);
+        // ...and it is only applied below 0.499 of the output sample rate
         let filter = null;
-        if (region.initialFilterFc <= 13500) {
-            const fc = tsfCents2Hertz(region.initialFilterFc);
-            if (fc < sampleRate * 0.499) {
+        let filterHeadroom = 0;
+        const usableCents = Math.min(minFilterCents, TSF_FILTER_BYPASS_CENTS);
+        if (tsfCents2Hertz(usableCents) / sampleRate < TSF_MAX_FILTER_RATIO) {
+            filterHeadroom = TSF_FILTER_BYPASS_CENTS - region.initialFilterFc;
+            const fc = Math.min(tsfCents2Hertz(region.initialFilterFc), maxFilterHz);
+            if (fc > 0) {
                 filter = context.createBiquadFilter();
                 filter.type = 'lowpass';
                 filter.frequency.value = fc;
-                // tsf's earlevel lowpass peaks at Q = 10^(QdB/20) (0 dB for the
-                // default Q), which is exactly what Web Audio's lowpass does
-                // when its Q (in dB) equals the generator's decibels.
+                // tsf's earlevel lowpass peaks at Q = 10^(QdB/20) (0 dB for
+                // the default Q), which is exactly what Web Audio's lowpass
+                // does when its Q (in dB) equals the generator's decibels.
                 filter.Q.value = region.initialFilterQ / 10;
                 voiceNodes.push(filter);
             }
         }
 
-        // envelope gain (peak = tsf noteGainDB)
-        const level = context.createGain();
+        // --- gains -------------------------------------------------------
+        // The amplitude envelope is written straight into the pan gains, so a
+        // voice needs one gain node per channel instead of a level node plus
+        // two pan nodes. A centred voice with no CC10 automation needs a single
+        // gain: Web Audio duplicates the mono signal to both channels itself,
+        // which is what tsf's sqrt(0.5) per channel comes out to.
+        // A CC10 move keeps the classic level + pan node layout, because there
+        // the two automations are independent (tsf re-applies the pan law to
+        // the still running envelope).
         const peak = Math.max(0, tsfDecibelsToGain(voice.noteGainDB));
-        scheduleAmpEnvelope(level.gain, voice.ampenv.parameters, start, stop, peak);
-        voiceNodes.push(level);
-
-        // pan: tsf's sqrt(0.5 -/+ pan) factors, per channel
+        const centered = Math.abs(voice.panFactorLeft - voice.panFactorRight) < 1e-6;
+        const folded = !panChanges;
         const panL = context.createGain();
-        panL.gain.value = voice.panFactorLeft;
-        const panR = context.createGain();
-        panR.gain.value = voice.panFactorRight;
-        const merger = context.createChannelMerger(2);
-        voiceNodes.push(panL, panR, merger);
-
-        // channel pan (CC10) moves both factors like tsf_channel_set_pan
-        if (option.pan && option.pan.length) {
-            option.pan.forEach((p) => {
+        const panR = (centered && folded) ? null : context.createGain();
+        const level = folded ? null : context.createGain();
+        const ampEnv = voice.ampenv.parameters;
+        if (folded) {
+            scheduleAmpEnvelope(panL.gain, ampEnv, start, stop, peak * voice.panFactorLeft);
+            if (panR) scheduleAmpEnvelope(panR.gain, ampEnv, start, stop, peak * voice.panFactorRight);
+        } else {
+            scheduleAmpEnvelope(level.gain, ampEnv, start, stop, peak);
+            panL.gain.value = voice.panFactorLeft;
+            panR.gain.value = voice.panFactorRight;
+            // channel pan (CC10) moves both factors like tsf_channel_set_pan
+            panChanges.forEach((p) => {
                 const pan01 = (p.value << 7) / 16383;
                 const newpan = region.pan + (pan01 - 0.5);
                 let left, right;
@@ -311,66 +468,88 @@ export function renderSF2NoteWebAudio(option) {
                 panR.gain.setValueAtTime(right, t);
             });
         }
+        let volGain = null;   // mod LFO -> volume multiplies before the pan gains
+        const lfoVolumeCents = region.modLfoToVolume || 0;
 
-        // modulation envelope -> pitch (cents) and -> filter cutoff (cents -> Hz curve)
-        const modEnv = voice.modenv.parameters;
-        // the curve covers the whole modulation envelope (its decay included),
-        // and the final value is held afterwards - without that hold the filter
-        // (or the detune) snaps back to its base value once the curve is over.
-        const modEnvSpan = Math.max(0.05,
-            Math.max(0, modEnv.delay || 0) + Math.max(0, modEnv.attack || 0)
-            + Math.max(0, modEnv.hold || 0) + Math.max(0, modEnv.decay || 0));
-        const curveDuration = Math.min(modEnvSpan, 8);
-        const modEnvEnd = start + curveDuration;
-        const curve = buildModEnvCurve(modEnv, curveDuration);
-        const lastLevel = curve[curve.length - 1];
-        if (region.modEnvToPitch) {
-            const cents = new Float32Array(curve.length);
-            for (let i = 0; i < curve.length; i++) cents[i] = curve[i] * region.modEnvToPitch;
-            try {
-                source.detune.setValueCurveAtTime(cents, start, curveDuration);
-                source.detune.setValueAtTime(lastLevel * region.modEnvToPitch, modEnvEnd);
-            } catch (e) { /* noop */ }
-        }
-        if (filter && region.modEnvToFilterFc) {
-            const base = filter.frequency.value;
-            const hz = new Float32Array(curve.length);
-            for (let i = 0; i < curve.length; i++) hz[i] = Math.min(sampleRate * 0.49, base * Math.pow(2, (curve[i] * region.modEnvToFilterFc) / 1200));
-            try {
-                filter.frequency.setValueCurveAtTime(hz, start, curveDuration);
-                filter.frequency.setValueAtTime(hz[hz.length - 1], modEnvEnd);
-            } catch (e) { /* noop */ }
+        // --- modulation --------------------------------------------------
+        // tsf resolves the modulation envelope and the LFOs per sample block and
+        // applies them to the pitch ratio, the cutoff and the note gain.
+        if (region.modEnvToPitch) scheduleModEnvelope(source.detune, modEnv, region.modEnvToPitch, start, stop, velocity);
+        if (filter && envFilterCents) {
+            // clamped so fres stays inside the range tsf would filter
+            const amount = Math.min(envFilterCents, filterHeadroom);
+            scheduleModEnvelope(filter.detune, modEnv, amount, start, stop, velocity);
         }
 
-        // LFOs -> detune (exact: tsf adds cents) and -> filter (Hz approximation)
-        const addLfo = (delay, freqCents, centsTarget, hzTarget) => {
-            if (!centsTarget && !hzTarget) return;
+        // LFOs modulate in *cents* in tsf (pitch, cutoff and volume alike). One
+        // oscillator feeds every target, at tsf's own rate: the frequency
+        // generator is in cents relative to 8.176 Hz (tsf_voice_lfo_setup:
+        // delta = 4 * tsf_cents2hertz(freq) / outSampleRate).
+        const addLfo = (delay, freqCents, pitchCents, filterCents, volCents) => {
+            if (!pitchCents && !filterCents && !volCents) return null;
             const osc = context.createOscillator();
             osc.type = 'triangle';
-            osc.frequency.value = 1 / Math.max(0.001, tsfTimecents2Secs(freqCents));
-            const gain = context.createGain();
-            osc.connect(gain);
-            if (centsTarget) { gain.gain.value = centsTarget; gain.connect(source.detune); }
-            if (hzTarget && filter) { gain.gain.value = hzTarget; gain.connect(filter.frequency); }
+            osc.frequency.value = Math.max(0.001, tsfCents2Hertz(freqCents));
+            if (pitchCents) {
+                const gain = context.createGain();
+                gain.gain.value = pitchCents;
+                osc.connect(gain);
+                gain.connect(source.detune);
+                voiceNodes.push(gain);
+            }
+            if (filterCents && filter) {
+                const gain = context.createGain();
+                gain.gain.value = Math.min(filterCents, Math.max(0, filterHeadroom));
+                osc.connect(gain);
+                gain.connect(filter.detune);
+                voiceNodes.push(gain);
+            }
+            if (volCents) {
+                // tsf: noteGain = decibelsToGain(noteGainDB + level * amount * 0.1),
+                // so the factor is exponential in the LFO level - a wave shaper
+                // turns the triangle into 10^(level * dB / 20), which drives the
+                // gain param (its intrinsic value stays 0, the signal is the gain).
+                const db = volCents * 0.1;
+                const shaper = context.createWaveShaper();
+                const curve = new Float32Array(1025);
+                for (let i = 0; i < curve.length; i++) {
+                    curve[i] = Math.pow(10, (((i / (curve.length - 1)) * 2) - 1) * db / 20);
+                }
+                shaper.curve = curve;
+                const gain = context.createGain();
+                gain.gain.value = 0;
+                osc.connect(shaper);
+                shaper.connect(gain.gain);
+                voiceNodes.push(shaper, gain);
+                if (!volGain) volGain = gain;
+            }
             const lfoStart = start + Math.max(0, delay);
             osc.start(Math.max(lfoStart, context.currentTime));
             osc.stop(stop + 0.05);
-            voiceNodes.push(osc, gain);
+            voiceNodes.push(osc);
+            return osc;
         };
-        const modFilterHz = (filter && region.modLfoToFilterFc)
-            ? filter.frequency.value * (Math.pow(2, Math.abs(region.modLfoToFilterFc) / 1200) - 1) : 0;
-        addLfo(region.delayModLFO, region.freqModLFO, region.modLfoToPitch, modFilterHz);
-        addLfo(region.delayVibLFO, region.freqVibLFO, region.vibLfoToPitch, 0);
+        addLfo(region.delayModLFO, region.freqModLFO, region.modLfoToPitch,
+            lfoFilterCents, lfoVolumeCents);
+        addLfo(region.delayVibLFO, region.freqVibLFO, region.vibLfoToPitch, 0, 0);
 
-        // graph
+        // --- graph -------------------------------------------------------
         let tail = source;
         if (filter) { source.connect(filter); tail = filter; }
-        tail.connect(level);
-        level.connect(panL);
-        level.connect(panR);
-        panL.connect(merger, 0, 0);
-        panR.connect(merger, 0, 1);
-        merger.connect(performanceGain);
+        if (volGain) { tail.connect(volGain); tail = volGain; }
+        if (level) { tail.connect(level); tail = level; voiceNodes.push(level); }
+        if (panR) {
+            tail.connect(panL);
+            tail.connect(panR);
+            panL.connect(getMerger(), 0, 0);
+            panR.connect(getMerger(), 0, 1);
+        } else {
+            // centred: one gain, Web Audio itself duplicates it to both channels
+            tail.connect(panL);
+            panL.connect(performanceGain);
+        }
+        voiceNodes.push(panL);
+        if (panR) voiceNodes.push(panR);
 
         // playback window: start at the region offset, stop after the release
         const offsetSec = Math.max(0, (region.offset - shdr.start) / shdr.sampleRate);
@@ -385,7 +564,7 @@ export function renderSF2NoteWebAudio(option) {
             source.start(Math.max(start, context.currentTime), Math.min(offsetSec, buffer.duration));
             source.stop(stopSource);
         } catch (e) {
-            try { source.disconnect(); } catch (e2) { /* noop */ }
+            for (const node of voiceNodes) { try { node.disconnect(); } catch (e2) { /* noop */ } }
             continue;
         }
         // release the graph when the note is over (the player never calls the
@@ -399,17 +578,24 @@ export function renderSF2NoteWebAudio(option) {
         };
         activeVoices++;
         nodes.push(...voiceNodes, source);
-        maxEnd = Math.max(maxEnd, stopSource);
+        // tsf's SUSTAIN loop mode (generator value 3) stops looping at note off
+        // and lets the rest of the sample play out
+        if (region.loopMode === 2 && source.loop) {
+            timers.push(setTimeout(() => {
+                try { source.loop = false; } catch (e) { /* noop */ }
+            }, Math.max(0, (stop - context.currentTime) * 1000)));
+        }
         startedAny = true;
     }
 
     if (!startedAny) {
-        try { performanceGain.disconnect(); stopGainNode.disconnect(); } catch (e) { /* noop */ }
+        try { merger.disconnect(); performanceGain.disconnect(); } catch (e) { /* noop */ }
         return null;
     }
 
     return () => {
-        try { stopGainNode.gain.setValueAtTime(0, context.currentTime); } catch (e) { /* noop */ }
+        try { performanceGain.gain.cancelScheduledValues(context.currentTime); } catch (e) { /* noop */ }
+        try { performanceGain.gain.setValueAtTime(0, context.currentTime); } catch (e) { /* noop */ }
         for (const node of nodes) {
             try { if (typeof node.stop === 'function') node.stop(); } catch (e) { /* noop */ }
             try { node.disconnect(); } catch (e) { /* noop */ }
@@ -417,6 +603,11 @@ export function renderSF2NoteWebAudio(option) {
         nodes.length = 0;
         releaseNoteGraph();
     };
+}
+
+/** tsf's note pitch ratio without the output sample rate factor. */
+function tsfTimecentsToRate(voice) {
+    return Math.pow(2, voice.pitchInputTimecents / 1200) * voice.pitchOutputFactor;
 }
 
 export default { renderSF2NoteWebAudio };
