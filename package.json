@@ -1,7 +1,7 @@
 {
   "name": "@maple-kaede/picoaudio",
   "version": "3.0.0",
-  "description": "PicoAudio.js is light MIDI player using Web Audio API",
+  "description": "PicoAudio.js fork: Web Audio MIDI player with basic waveforms, wavetable additive synthesis and SoundFont 2 playback, in selectable builds",
   "main": "dist/nodejs/picoaudio.js",
   "module": "dist/nodejs/picoaudio.mjs",
   "publishConfig": {
@@ -34,11 +34,17 @@
   "keywords": [
     "midi",
     "smf",
+    "midi player",
     "chiptune",
     "web audio api",
     "web-audio-api",
     "web midi api",
-    "web-midi-api"
+    "web-midi-api",
+    "soundfont",
+    "sf2",
+    "wavetable",
+    "additive synthesis",
+    "synthesizer"
   ],
   "author": "Maple-Kaede <haveyouwantto@gmail.com>",
   "license": "MIT",

@@ -1,52 +1,57 @@
 # PicoAudio.js
 
-## PicoAudio.jsについて
+Web Audio API で MIDI (Standard MIDI File = SMF) を再生する JavaScript ライブラリです。
+[cagpie/PicoAudio.js](https://github.com/cagpie/PicoAudio.js) のフォークで、発音エンジンを
+3 種類から選べるようにし、必要なエンジンだけを含む複数のビルドを追加しています。
 
-Web上でMIDI(Standard MIDI File=SMF)を再生するためのJavaScriptライブラリです。<br>
-SMF形式のバイナリのパースや、Web Audio API を用いた楽曲の再生ができます。
+This is a fork of [cagpie/PicoAudio.js](https://github.com/cagpie/PicoAudio.js) with
+three switchable sound engines and selectable builds, so a player can ship only the
+engines it needs.
 
-Web Audio API から提供される数種の音源を組み合わせて、8bitサウンドで演奏を行います。<br>
-また、別途音源の準備をする必要がなく、Webと音楽を組み合わせた開発がすぐに始められます！
+| `settings.soundQuality` | engine | needs an asset |
+| --- | --- | --- |
+| `0` | 8-bit style basic waveforms (upstream oscillators) | no |
+| `1` (default) | additive synthesis from a wavetable instrument set | built in table, or `loadWaves()` |
+| `3` | deprecated slot, kept as an alias of `4` | - |
+| `4` | SoundFont 2 (.sf2) playback, including GM drum kits | `loadSF2(buffer)` |
 
-A JavaScript library for playing MIDI (Standard MIDI File = SMF) on Web. <br>
-You can parse SMF Files and play music using Web Audio API.
+## 主な機能 / Features
+- MIDIファイル(SMF)のパースと再生、noteOn/noteOff イベント
+- `soundQuality` 0/1/4 の切り替え。1 は GM 128 音色 × 5 オクターブの加算合成
+  (撥弦系にはフィルタ掃引付き)、4 は TinySoundFont 移植版または Web Audio ノードで SF2 を再生
+- 長い音符のチャンク合成、オフライン描画 (`OfflineAudioContext`)、WAV 書き出し
+- ビルドバリエーション: `basic` / `wave` / `wave-nodefault` / `sf2` /
+  `sf2-wave-nodefault` / `full` (169 KB 〜 341 KB、[Build variants](#build-variants--ビルドバリエーション))
+- 音源が未読み込みのときは自動で basic エンジンにフォールバック
 
-Play with 8-bit sound by combining several types of sound sources provided by Web Audio API. <br>
-There is no need to prepare a sound source, and development that combines the Web and Music can be started immediately!
-
-## 主な機能
-- MIDIファイル(SMF)のパース
-- パースしたデータの再生
-- 再生時のnoteOn/noteOffイベント受け取り など
-
-
-## 利用されているプロダクト
-
-- [Picotune](http://picotune.me) by @cagpie
-- [Tonyu System 2](https://www.tonyu.jp/Tonyu2.php) by @hoge1e3
-
-
-## サンプル
+## サンプル / Samples (upstream のデモ / demos of the upstream library)
 
 - [Sample1](https://cagpie.github.io/PicoAudio.js/sample/cdn-sample1.html)
 - [Sample2](https://cagpie.github.io/PicoAudio.js/sample/cdn-sample2.html)
+
+## 利用されているプロダクト / Used by
+
+- [Picotune](http://picotune.me) by @cagpie
+- [Tonyu System 2](https://www.tonyu.jp/Tonyu2.php) by @hoge1e3
+  (どちらも upstream の PicoAudio.js を利用しています / both use upstream PicoAudio.js)
 
 ## 導入方法
 
 ### Browser
 ```html
-<script src="https://unpkg.com/picoaudio/dist/browser/PicoAudio.js"></script>
+<script src="https://unpkg.com/@maple-kaede/picoaudio/dist/browser/PicoAudio.js"></script>
 または、
-<script src="https://unpkg.com/picoaudio/dist/browser/PicoAudio.min.js"></script>
+<script src="https://unpkg.com/@maple-kaede/picoaudio/dist/browser/PicoAudio.min.js"></script>
 ```
 ※ グローバル変数に `PicoAudio` が定義されます
+※ ビルドバリエーションを使う場合は `PicoAudio.basic.min.js` などのファイル名に置き換えてください
 
 
 ### Module
 ```bash
-$ npm install picoaudio
+$ npm install @maple-kaede/picoaudio
 ```
-https://www.npmjs.com/package/picoaudio (`pico-audio-js` has deprecated)
+https://www.npmjs.com/package/@maple-kaede/picoaudio
 
 ## はじめ方
 
