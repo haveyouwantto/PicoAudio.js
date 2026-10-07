@@ -20,10 +20,18 @@ import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
 const SF2_MAX_TAIL_SECONDS = 30;
 
 /**
- * App level trim. The SoundFont gain itself is exactly TSF's, this is only a
- * master volume for PicoAudio's mixer; lower it if a dense song clips.
+ * App level trim for the SF2 engine.
+ *
+ * The SoundFont gain itself is exactly TSF's (that is what makes the
+ * instruments balance), but TSF's absolute level is far hotter than
+ * PicoAudio's built-in sound modes: a note at velocity 100 peaks around 0.43
+ * here versus ~0.09 for soundQuality 0/1/3, so a chord clipped immediately.
+ * -12 dB puts SF2 back on the same scale as the other modes (and on the same
+ * scale the previous Web Audio based renderer used), leaving TSF's relative
+ * levels, envelopes and dynamics untouched.
  */
-const SF2_OUTPUT_TRIM = 1.0;
+const SF2_OUTPUT_TRIM_DB = -12;
+const SF2_OUTPUT_TRIM = Math.pow(10, SF2_OUTPUT_TRIM_DB / 20);
 
 const PICO_GENERATE_VOLUME_REFERENCE = 0.15;
 
