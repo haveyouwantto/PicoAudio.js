@@ -58,12 +58,25 @@ const TSF_MAX_FILTER_RATIO = 0.499;
 /** Gain floors only guard the exponential ramps; both are far below audibility. */
 const GAIN_FLOOR = 1e-9;
 
-/** Decoded sample slices, per AudioContext (offline contexts are separate). */
+/**
+ * Decoded sample slices, per AudioContext (offline contexts are separate).
+ *
+ * The entry remembers which font it was built from: the app keeps one
+ * AudioContext for playback and simply loads the next SoundFont into it, so a
+ * cache keyed by the context alone kept handing out the *previous* font's
+ * samples to the new font's regions - every instrument came out wrong until
+ * the page was reloaded. (The DSP renderer reads the font directly, which is
+ * why it was unaffected.)
+ */
 const sampleBufferCache = new WeakMap();
 
 function getSampleBuffer(context, font, sampleId) {
-    let perContext = sampleBufferCache.get(context);
-    if (!perContext) { perContext = new Map(); sampleBufferCache.set(context, perContext); }
+    let entry = sampleBufferCache.get(context);
+    if (!entry || entry.font !== font) {
+        entry = { font, buffers: new Map() };
+        sampleBufferCache.set(context, entry);
+    }
+    const perContext = entry.buffers;
     let buffer = perContext.get(sampleId);
     if (buffer) return buffer;
 
