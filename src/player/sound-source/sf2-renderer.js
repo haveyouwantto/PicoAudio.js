@@ -18,6 +18,11 @@ import { getSF2Layers, panToPosition } from "./sf2-provider.js";
 // Envelope curve sample count for setValueCurveAtTime
 const ENV_CURVE_SAMPLES = 64;
 
+// SF2 initialFilterFc defaults to 13500 cents, which is 8.176 * 2^(13500/1200)
+// ≈ 19.9 kHz — i.e. "no filtering". A zone that leaves the generator at its
+// default must not pay for a BiquadFilterNode per voice.
+const SF2_FILTER_DEFAULT_HZ = 19900;
+
 // Calibrate the SF2 output stage against PicoAudio's waveform/buffer modes.
 // This is one global output gain, not a per-font or per-instrument adjustment.
 const SF2_OUTPUT_CALIBRATION = 0.5;
@@ -289,7 +294,7 @@ function buildLayer({
     // --- filter ---
     let filter = null;
     const filterFc = layer.filterFc != null ? layer.filterFc : 20000;
-    if (filterFc < 20000 && filterFc > 20) {
+    if (filterFc < SF2_FILTER_DEFAULT_HZ && filterFc > 20) {
         filter = context.createBiquadFilter();
         filter.type = 'lowpass';
         filter.frequency.value = Math.min(filterFc, context.sampleRate * 0.45);
@@ -466,6 +471,12 @@ function scheduleVolumeEnvelope({ gainNode, env, start, stop, peak }) {
     const ATTACK_TC = attack * 0.1;
     const DECAY_TC = decay * 0.1;
     const RELEASE_TC = release * 0.1;
+
+    // Envelope starts from silence. Without an event at `start` the parameter
+    // keeps its current value (the layer gain) through the delay stage, so a
+    // zone with delayVolEnv > 0 sounded at full level first and then snapped
+    // back to 0 when the attack began.
+    param.setValueAtTime(0, start);
 
     // Delay: silence until attackStart.
     param.setValueAtTime(0, attackStart);

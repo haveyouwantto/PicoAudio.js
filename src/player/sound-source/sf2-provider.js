@@ -22,6 +22,21 @@ let sf2Data = null;
 /** Pre-decoded AudioBuffers, keyed by sampleHeaderIndex */
 const sf2BufferCache = [];
 
+/**
+ * Preset lookup index, rebuilt on every loadSF2.
+ *
+ * getSF2Layers runs for every note that is started, so it must not walk the
+ * full preset list. Presets are bucketed by bank*128+program and get a 128 bit
+ * coverage mask per axis, which makes a note lookup a couple of hash/bit tests
+ * instead of a scan over every preset and zone of the font.
+ */
+let melodicPresetIndex = new Map();
+let drumPresetIndex = new Map();
+const NO_PRESETS = [];
+
+const indexKey = (bank, program) => ((bank & 0x7fff) * 128) + (program & 0x7f);
+const maskHas = (mask, value) => (mask[value >> 5] & (1 << (value & 31))) !== 0;
+
 /** Compatibility export. SF2 playback uses the font's encoded gain unchanged. */
 let sf2FontGain = 1;
 
@@ -77,6 +92,36 @@ function balancePresetLoudness(presetZones, sampleRms) {
     if (!(target > 0)) return;
     for (const { preset, level } of presets) {
         preset.balanceGain = Math.max(PRESET_BALANCE_MIN, Math.min(PRESET_BALANCE_MAX, target / level));
+    }
+}
+
+/**
+ * Bucket the resolved presets by bank/program and precompute the key and
+ * velocity coverage of every preset as a 128 bit mask. The masks are a
+ * conservative pre-filter (key and velocity are tested independently), the
+ * exact per-zone range test still happens while collecting layers.
+ */
+function buildPresetIndex(presetZones) {
+    melodicPresetIndex = new Map();
+    drumPresetIndex = new Map();
+
+    for (const preset of presetZones) {
+        const keyMask = new Uint32Array(4);
+        const velMask = new Uint32Array(4);
+        for (const zone of preset.zones) {
+            const kr = zone.keyRange || [0, 127];
+            const vr = zone.velRange || [0, 127];
+            for (let k = Math.max(0, kr[0]); k <= Math.min(127, kr[1]); k++) keyMask[k >> 5] |= 1 << (k & 31);
+            for (let v = Math.max(0, vr[0]); v <= Math.min(127, vr[1]); v++) velMask[v >> 5] |= 1 << (v & 31);
+        }
+        preset.keyMask = keyMask;
+        preset.velMask = velMask;
+
+        const index = (preset.isDrum || preset.bank >= 120) ? drumPresetIndex : melodicPresetIndex;
+        const key = indexKey(preset.bank, preset.program);
+        const bucket = index.get(key);
+        if (bucket) bucket.push(preset);
+        else index.set(key, [preset]);
     }
 }
 
@@ -157,6 +202,7 @@ export function loadSF2(ctx, arrayBuffer) {
         // calibration for inconsistent PCM recording levels within the font.
         sf2FontGain = 1;
         balancePresetLoudness(presetZones, sampleRms);
+        buildPresetIndex(presetZones);
         sf2Data.fontGain = sf2FontGain;
         console.log('SF2 volume: encoded attenuation + bounded preset balance');
         return true;
@@ -164,6 +210,8 @@ export function loadSF2(ctx, arrayBuffer) {
         console.error('Failed to parse SF2:', e);
         sf2Data = null;
         sf2BufferCache.length = 0;
+        melodicPresetIndex = new Map();
+        drumPresetIndex = new Map();
         return false;
     }
 }
@@ -257,35 +305,38 @@ export function panToPosition(pan) {
 export function getSF2Layers(program, pitch, velocity = 100, isDrum = false, bank = 0) {
     if (!sf2Data) return [];
 
-    const { presetZones, samples: sampleHeaders } = sf2Data;
+    const { samples: sampleHeaders } = sf2Data;
 
     // Deterministic preset selection. The app does not expose MIDI bank
     // selection, so melodic instruments always resolve to bank 0. A drum note
     // must trigger exactly ONE drum kit — layering every kit that covers the
     // pitch (Ct2mgm: 138 kits) caused ~200 audio sources per hit (freeze) and
     // summed full-gain layers (loudness).
-    const presetIsDrum = (pz) => pz.isDrum || pz.bank >= 120;
-    const presetCovers = (pz) => pz.zones.some(z =>
-        pitch >= z.keyRange[0] && pitch <= z.keyRange[1] &&
-        velocity >= z.velRange[0] && velocity <= z.velRange[1]);
-
-    const selectors = isDrum
+    // The candidate buckets are tried in order and the first non-empty one
+    // wins, exactly like the previous filtered full-font scan.
+    const buckets = isDrum
         ? [
             // exact kit from the MIDI (bank + program)
-            (pz) => presetIsDrum(pz) && pz.bank === bank && pz.program === program,
+            drumPresetIndex.get(indexKey(bank, program)),
             // GM standard drum kit
-            (pz) => presetIsDrum(pz) && pz.bank === 128 && pz.program === 0,
+            drumPresetIndex.get(indexKey(128, 0)),
             // bank-0 kit with the requested program
-            (pz) => presetIsDrum(pz) && pz.bank === 0 && pz.program === program,
+            drumPresetIndex.get(indexKey(0, program)),
         ]
         : [
             // bank 0 only (MIDI bank select is intentionally ignored)
-            (pz) => !presetIsDrum(pz) && pz.bank === 0 && pz.program === program,
+            melodicPresetIndex.get(indexKey(0, program)),
         ];
 
-    let matchedPresets = [];
-    for (const selector of selectors) {
-        const matches = presetZones.filter(selector).filter(presetCovers);
+    let matchedPresets = NO_PRESETS;
+    for (const bucket of buckets) {
+        if (!bucket || bucket.length === 0) continue;
+        const matches = [];
+        for (const pz of bucket) {
+            if (!maskHas(pz.keyMask, pitch)) continue;
+            if (!maskHas(pz.velMask, velocity)) continue;
+            matches.push(pz);
+        }
         if (matches.length > 0) {
             matchedPresets = matches;
             break;
@@ -361,10 +412,18 @@ function resolveLayerParameters(zone, shdr, sampleId, preset, buffer, pitch) {
     // Volume envelope with keynum-based time correction (gen 39/40).
     // keyNumToVolEnvHold/Decay are timecents PER KEY relative to MIDI key 60,
     // and they INCREMENT the base envelope time — they do not replace it:
-    //   timecents(key) = baseTimecents + gen39/40 * (pitch - 60)
-    // Replacing the base value collapsed long decays to a couple of seconds
-    // (RLNDGM piano decay 13.7s -> 1.26s), making notes die almost instantly.
-    const keyNumDiff = pitch - 60;
+    //   timecents(key) = baseTimecents + gen39/40 * (60 - key)
+    // Key 60 is the origin and increasing the key number *shortens* hold and
+    // decay, so the fonts that store a positive value (RLNDGM, Neo1MGM) make
+    // high notes die faster — which is how a piano actually behaves. This is
+    // the same slope TinySoundFont uses (tsf.h, tsf_voice_envelope_setup).
+    // Two traps this code has to keep in mind:
+    //  - replacing the base value collapsed long decays to a couple of
+    //    seconds (RLNDGM piano decay 13.7s -> 1.26s), making notes die almost
+    //    instantly;
+    //  - using (key - 60) inverted the slope, so high notes sustained longer
+    //    than low ones.
+    const keyNumDiff = 60 - pitch;
     const env = {
         delay:   g.delayVolEnv   != null ? g.delayVolEnv   : 0,
         attack:  g.attackVolEnv  != null ? g.attackVolEnv  : 0.001,
@@ -382,7 +441,8 @@ function resolveLayerParameters(zone, shdr, sampleId, preset, buffer, pitch) {
         env.decay = Math.max(0.001, timecentsToSecondsSafe(baseDecayTc + g.keyNumToVolEnvDecay * keyNumDiff));
     }
 
-    // Modulation envelope with keynum corrections (gen 31/32)
+    // Modulation envelope with keynum corrections (gen 31/32), same
+    // (60 - key) slope as the volume envelope above.
     const modEnv = {
         delay:   g.delayModEnv_seconds   != null ? g.delayModEnv_seconds   : 0,
         attack:  g.attackModEnv_seconds  != null ? g.attackModEnv_seconds  : 0.001,
