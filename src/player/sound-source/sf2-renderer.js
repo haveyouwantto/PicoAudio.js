@@ -27,7 +27,9 @@ const SF2_MAX_TAIL_SECONDS = 30;
 
 /** Streaming: chunk length, how much is pre-rendered, and how far ahead we keep the queue. */
 const SF2_STREAM_CHUNK_SECONDS = 1;
-const SF2_STREAM_LEAD_CHUNKS = 2;
+// A hidden tab throttles setTimeout (background timers can be delayed by
+// seconds), so keep a bit more audio queued than the pump interval needs.
+const SF2_STREAM_LEAD_CHUNKS = 3;
 const SF2_STREAM_LOOKAHEAD_SECONDS = 2;
 const SF2_STREAM_PUMP_MS = 200;
 const SF2_STREAM_MAX_CHUNKS_PER_PUMP = 4;
