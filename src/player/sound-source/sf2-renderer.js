@@ -33,6 +33,21 @@ const SF2_STREAM_LEAD_CHUNKS = 3;
 const SF2_STREAM_LOOKAHEAD_SECONDS = 2;
 const SF2_STREAM_PUMP_MS = 200;
 const SF2_STREAM_MAX_CHUNKS_PER_PUMP = 4;
+/** When the queue has fallen behind, synthesize this many chunks in one go. */
+const SF2_STREAM_CATCHUP_CHUNKS = 32;
+
+/**
+ * Notes that are currently streaming (their remaining audio is still being
+ * synthesized by a timer). Hosts can flush them, which synthesizes everything
+ * that is left right away - used when timers become unreliable (background
+ * tabs) so playback never runs out of queued audio.
+ */
+const activeStreamers = new Set();
+
+export function flushSF2Streaming() {
+    for (const streamer of [...activeStreamers]) streamer.flush();
+    return activeStreamers.size;
+}
 
 /**
  * App level trim for the SF2 engine.
@@ -206,16 +221,35 @@ export function renderSF2Note(option) {
     const pump = () => {
         timer = null;
         if (stopped) return;
-        let budget = SF2_STREAM_MAX_CHUNKS_PER_PUMP;
-        const scheduledUntil = () => start + scheduledFrames / sampleRate;
+        const scheduledUntil = start + scheduledFrames / sampleRate;
+        // If the playhead has caught up with the queue (the main thread was
+        // busy, or the tab was throttled) refill it in one bigger burst.
+        let budget = scheduledUntil <= context.currentTime
+            ? SF2_STREAM_CATCHUP_CHUNKS
+            : SF2_STREAM_MAX_CHUNKS_PER_PUMP;
         while (budget-- > 0 && !renderer.isDone()
-            && scheduledUntil() < context.currentTime + SF2_STREAM_LOOKAHEAD_SECONDS) {
+            && start + scheduledFrames / sampleRate < context.currentTime + SF2_STREAM_LOOKAHEAD_SECONDS) {
             if (!scheduleChunk()) return;
         }
-        if (!renderer.isDone()) timer = setTimeout(pump, SF2_STREAM_PUMP_MS);
+        if (renderer.isDone()) { activeStreamers.delete(streamer); return; }
+        timer = setTimeout(pump, SF2_STREAM_PUMP_MS);
+    };
+
+    // Registered so a host can finish the note immediately when timers become
+    // unreliable (hidden tab) instead of risking a gap in the middle of it.
+    const streamer = {
+        flush() {
+            if (stopped) return;
+            if (timer !== null) { clearTimeout(timer); timer = null; }
+            while (!renderer.isDone()) {
+                if (!scheduleChunk()) break;
+            }
+            activeStreamers.delete(streamer);
+        },
     };
 
     if (streaming) {
+        activeStreamers.add(streamer);
         // Bounded start-up cost: only the first chunks are synthesized now.
         for (let i = 0; i < SF2_STREAM_LEAD_CHUNKS && !renderer.isDone(); i++) {
             if (!scheduleChunk()) break;
@@ -239,6 +273,7 @@ export function renderSF2Note(option) {
     return () => {
         stopped = true;
         if (timer !== null) { clearTimeout(timer); timer = null; }
+        activeStreamers.delete(streamer);
         try { stopGainNode.gain.setValueAtTime(0, context.currentTime); } catch (e) { /* noop */ }
         for (const source of sources) {
             try { source.stop(); } catch (e) { /* noop */ }
@@ -250,4 +285,4 @@ export function renderSF2Note(option) {
     };
 }
 
-export default { renderSF2Note };
+export default { renderSF2Note, flushSF2Streaming };

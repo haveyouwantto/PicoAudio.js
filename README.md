@@ -299,6 +299,8 @@ picoAudio.getSF2Interpolation();
 メインスレッドが固まりません (60 秒の音符で 42ms → 1.2ms、メモリ 20MB → 0.7MB)。
 `OfflineAudioContext` (WAV/動画書き出し) では従来どおり一括合成します。
 `settings.sf2Streaming = false` で無効化できます。
+バックグラウンドのタブではタイマーが間引かれるため、非表示になった時点で
+再生中の音符の残りを全て合成し、以降の音符は一括合成に切り替えます (音が途切れません)。
 
 
 ## Credits
