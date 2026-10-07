@@ -196,6 +196,20 @@ function calcPitchRatio(v, pitchShift, outSampleRate) {
     v.pitchOutputFactor = region.sampleRate / (tsfTimecents2Secs(region.pitchKeycenter * 100.0) * outSampleRate);
 }
 
+/**
+ * tsf_channel_set_pan for one voice: the channel pan (0..1, 0.5 = center) is
+ * an offset added to the region pan, then the 3 dB pan law is re-applied.
+ */
+function applyChannelPan(v, pan) {
+    const newpan = v.region.pan + (pan - 0.5);
+    if (newpan <= -0.5) { v.panFactorLeft = 1.0; v.panFactorRight = 0.0; }
+    else if (newpan >= 0.5) { v.panFactorLeft = 0.0; v.panFactorRight = 1.0; }
+    else {
+        v.panFactorLeft = f32(Math.sqrt(0.5 - newpan));
+        v.panFactorRight = f32(Math.sqrt(0.5 + newpan));
+    }
+}
+
 /** tsf_note_on: one voice per matching region (this port renders a note alone). */
 export function noteOnVoices(font, presetIndex, key, vel) {
     const voices = [];
@@ -405,18 +419,40 @@ function voiceRender(font, v, out, offset, numSamples) {
  * Mirrors `tsf_note_on` + `tsf_note_off` + `tsf_render_float` with the note
  * started at frame 0 and released after `noteOffFrames`.
  *
+ * `pitchBends` are {frame, value} pairs (value in semitones). They are applied
+ * to the voices at block boundaries, which is how TSF applies channel pitch
+ * wheel changes (tsf_channel_applypitch -> tsf_voice_calcpitchratio).
+ *
  * @returns {{data: Float32Array, frames: number}} interleaved LR samples
  */
-export function renderNote(font, presetIndex, key, vel, noteOffFrames, maxFrames) {
+export function renderNote(font, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges) {
     const voices = noteOnVoices(font, presetIndex, key, vel);
     let out = new Float32Array(8192 * 2);
     let written = 0;
     let released = false;
+    let bendIndex = 0;
+    let panIndex = 0;
 
     for (;;) {
         let alive = false;
         for (const v of voices) { if (v.playingPreset !== -1) { alive = true; break; } }
         if (!alive || written >= maxFrames) break;
+
+        while (pitchBends && bendIndex < pitchBends.length && pitchBends[bendIndex].frame <= written) {
+            const semitones = pitchBends[bendIndex].value;
+            for (const v of voices) {
+                if (v.playingPreset !== -1) calcPitchRatio(v, semitones, font.outSampleRate);
+            }
+            bendIndex++;
+        }
+
+        while (panChanges && panIndex < panChanges.length && panChanges[panIndex].frame <= written) {
+            const pan = panChanges[panIndex].value;
+            for (const v of voices) {
+                if (v.playingPreset !== -1) applyChannelPan(v, pan);
+            }
+            panIndex++;
+        }
 
         if (!released && written >= noteOffFrames) {
             noteOffVoices(font, voices, presetIndex, key);

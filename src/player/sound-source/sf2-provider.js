@@ -69,19 +69,40 @@ export function getSF2Data() {
  * Resolve which preset a MIDI program plays.
  *
  * Melodic instruments always use bank 0 (the app does not expose MIDI bank
- * select). Drums try the kit the file asks for first and then fall back to
- * the GM kit in bank 128.
+ * select). Percussion only ever uses a kit bank: a channel 9 note carries the
+ * channel's program but no meaningful bank select, so falling back to the
+ * melodic preset of that program (bank 0) would silence the drums — or worse,
+ * play a piano note for every hit. Kits are tried in GM order (128/program,
+ * then 128/0) and the first one that actually covers the key and velocity
+ * wins, which mirrors the old "a kit must be a drum kit and must cover the
+ * note" selection.
  */
-export function getSF2PresetIndex(program, isDrum = false, bank = 0) {
+export function getSF2PresetIndex(program, isDrum = false, bank = 0, key = -1, velocity = -1) {
     if (!sf2Font) return -1;
     if (!isDrum) return sf2Font.getPresetIndex(0, program);
 
-    return [
-        [bank, program],
-        [128, program],
-        [128, 0],
-        [0, program],
-    ].reduce((found, [b, p]) => (found >= 0 ? found : sf2Font.getPresetIndex(b, p)), -1);
+    const candidates = [];
+    if (bank >= 120) candidates.push([bank, program]);
+    candidates.push([128, program], [128, 0]);
+
+    const kits = [];
+    for (const [b, p] of candidates) {
+        const index = sf2Font.getPresetIndex(b, p);
+        if (index >= 0 && !kits.includes(index)) kits.push(index);
+    }
+    if (kits.length === 0) return -1;
+    if (key < 0 || velocity < 0) return kits[0];
+
+    const covering = kits.find((index) => presetCovers(sf2Font, index, key, velocity));
+    return covering !== undefined ? covering : kits[0];
+}
+
+/** Does the preset have a region for this key/velocity? (MIDI velocity 0..127) */
+function presetCovers(font, index, key, velocity) {
+    const preset = font.presets[index];
+    if (!preset) return false;
+    return preset.regions.some((r) => key >= r.lokey && key <= r.hikey
+        && velocity >= r.lovel && velocity <= r.hivel);
 }
 
 /**
@@ -90,7 +111,7 @@ export function getSF2PresetIndex(program, isDrum = false, bank = 0) {
  */
 export function getSF2Regions(program, pitch, velocity = 100, isDrum = false, bank = 0) {
     if (!sf2Font) return [];
-    const presetIndex = getSF2PresetIndex(program, isDrum, bank);
+    const presetIndex = getSF2PresetIndex(program, isDrum, bank, pitch, velocity);
     if (presetIndex < 0) return [];
     const vel = Math.max(0, Math.min(127, velocity)) / 127;
     const voices = noteOnVoices(sf2Font, presetIndex, pitch, vel);

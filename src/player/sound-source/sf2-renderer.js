@@ -44,22 +44,44 @@ export function renderSF2Note(option) {
     const stop = option.stopTime + songStartTime + baseLatency;
     const isDrum = option.isDrum === true || option.channel === 9;
 
+    // TinySoundFont plays the note-on velocity at face value; option.midiVelocity
+    // is the raw MIDI byte (option.velocity also carries the channel volume).
     const velocity = Math.max(0, Math.min(127, Math.round(
-        (Number.isFinite(option.velocity) ? option.velocity : 1) * 127
+        Number.isFinite(option.midiVelocity) ? option.midiVelocity
+            : (Number.isFinite(option.velocity) ? option.velocity : 1) * 127
     )));
     // MIDI note-on with velocity zero is a note-off and must not sound.
     if (velocity === 0) return null;
 
-    const presetIndex = getSF2PresetIndex(option.instrument, isDrum, option.bank || 0);
+    const presetIndex = getSF2PresetIndex(option.instrument, isDrum, option.bank || 0, option.pitch, velocity);
     if (presetIndex < 0) return null;
 
     const sampleRate = context.sampleRate || 44100;
     const noteFrames = Math.max(1, Math.round((stop - start) * sampleRate));
     const maxFrames = noteFrames + Math.round(SF2_MAX_TAIL_SECONDS * sampleRate);
 
+    // Pitch bend is baked into the synthesis (TSF applies channel pitch wheel
+    // to the voices), so the rendered buffer needs no playbackRate automation.
+    const pitchBends = (option.pitchBend && option.pitchBend.length
+        ? option.pitchBend.map((p) => ({
+            frame: Math.max(0, Math.round(((p.time + songStartTime + baseLatency) - start) * sampleRate)),
+            value: p.value,
+        })).sort((a, b) => a.frame - b.frame)
+        : null);
+
+    // Channel pan (CC10) is a channel level offset on top of the region pan,
+    // exactly like tsf_channel_setup_voice / tsf_channel_set_pan.
+    const panChanges = (option.pan && option.pan.length
+        ? option.pan.map((p) => ({
+            frame: Math.max(0, Math.round(((p.time + songStartTime + baseLatency) - start) * sampleRate)),
+            value: (p.value << 7) / 16383,
+        })).sort((a, b) => a.frame - b.frame)
+        : null);
+
     // tsf_note_on at frame 0, tsf_note_off at noteFrames, render until the
     // voices die or the tail cap is reached.
-    const rendered = font.renderNote(presetIndex, option.pitch, velocity / 127, noteFrames, maxFrames);
+    const rendered = font.renderNote(
+        presetIndex, option.pitch, velocity / 127, noteFrames, maxFrames, pitchBends, panChanges);
     if (!rendered.frames) return null;
 
     const buffer = context.createBuffer(2, rendered.frames, sampleRate);
@@ -73,14 +95,6 @@ export function renderSF2Note(option) {
 
     const source = context.createBufferSource();
     source.buffer = buffer;
-
-    // --- pitch bend: scheduled playbackRate changes (same as before) ---
-    if (option.pitchBend && option.pitchBend.length) {
-        option.pitchBend.forEach((p) => {
-            const t = Math.max(0, p.time + songStartTime + baseLatency);
-            source.playbackRate.setValueAtTime(Math.pow(2, p.value / 12), t);
-        });
-    }
 
     // Shared stop gain: every note has exactly one universal mute.
     const stopGainNode = context.createGain();
@@ -100,18 +114,26 @@ export function renderSF2Note(option) {
     const channelVolume = this.channels && this.channels[channel] && this.channels[channel][2] != null
         ? this.channels[channel][2]
         : 1;
-    const outputGain = Math.max(0, SF2_OUTPUT_TRIM
+    const userGain = Math.max(0, SF2_OUTPUT_TRIM
         * (configuredGenerateVolume / PICO_GENERATE_VOLUME_REFERENCE)
         * channelVolume);
 
+    // Channel volume / expression follow the reference: the CC7 and CC11
+    // values are multiplied and cubed (tsf_channel_midi_control ->
+    // tsf_channel_set_volume), and a channel that never received CC7 stays at
+    // full scale instead of being attenuated.
+    const midiVolume = (Number.isFinite(option.midiVolume) ? option.midiVolume : 127) / 127;
+    const midiExpression = Number.isFinite(option.midiExpression) ? option.midiExpression : 127;
+    const channelGain = (expression01) => Math.pow(midiVolume * expression01, 3);
+
     const performanceGain = context.createGain();
     const expression = option.expression && option.expression.length ? option.expression : null;
-    const initialExpression = expression ? expression[0].value / 127 : 100 / 127;
-    performanceGain.gain.setValueAtTime(outputGain * initialExpression, start);
+    const initialExpression = expression ? expression[0].value / 127 : midiExpression / 127;
+    performanceGain.gain.setValueAtTime(userGain * channelGain(initialExpression), start);
     if (expression) {
         expression.forEach((point) => {
             const time = Math.max(0, point.time + songStartTime + baseLatency);
-            performanceGain.gain.setValueAtTime(outputGain * (point.value / 127), time);
+            performanceGain.gain.setValueAtTime(userGain * channelGain(point.value / 127), time);
         });
     }
 
