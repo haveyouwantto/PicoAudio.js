@@ -294,6 +294,12 @@ picoAudio.getSF2Interpolation();
 `settings.soundQuality = 4` と併せて `settings.sf2Interpolation` を直接設定しても構いません。
 ドラム (MIDI チャンネル 10) は GM のキットバンク (bank 128) からプリセットを選びます。
 
+長い音符は**チャンク単位でストリーミング合成**されます。音符を開始した瞬間に必要なのは
+先頭 2 秒分だけで、残りは再生に合わせて少しずつ合成されるため、数秒〜数十秒の持続音でも
+メインスレッドが固まりません (60 秒の音符で 42ms → 1.2ms、メモリ 20MB → 0.7MB)。
+`OfflineAudioContext` (WAV/動画書き出し) では従来どおり一括合成します。
+`settings.sf2Streaming = false` で無効化できます。
+
 
 ## Credits
 

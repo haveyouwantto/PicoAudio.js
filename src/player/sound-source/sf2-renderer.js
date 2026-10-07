@@ -1,12 +1,17 @@
 /**
  * SF2 Renderer — TinySoundFont port edition
  *
- * A note is synthesized offline by the ported TinySoundFont renderer
- * (player/sf2/tsf-synth.js) into stereo PCM, then played through a
- * BufferSourceNode. That means the whole signal path — region selection,
+ * A note is synthesized by the ported TinySoundFont renderer
+ * (player/sf2/tsf-synth.js) into stereo PCM, then played through
+ * BufferSourceNodes. That means the whole signal path — region selection,
  * envelope, filter, LFOs, looping, pan and gain — is the reference
  * implementation's, so the output matches TinySoundFont sample for sample
  * instead of approximating it with a Web Audio node graph.
+ *
+ * Long notes are streamed: the synth is stateful and produces one chunk at a
+ * time while the previous chunk plays, so a 60 second pad no longer blocks the
+ * main thread for ~40ms and ~20MB at note-on. Offline contexts (wav/video
+ * export) have no wall clock to follow and render the whole note in one go.
  *
  * The only things added on top are the ones the application needs and TSF has
  * no concept of: the pre-scheduled pitch bend / expression automation of
@@ -15,10 +20,17 @@
  */
 
 import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
-import { resolveInterpolation } from "../sf2/tsf-synth.js";
+import { createNoteRenderer, resolveInterpolation } from "../sf2/tsf-synth.js";
 
 /** Hard cap on the release tail that is rendered past the note-off. */
 const SF2_MAX_TAIL_SECONDS = 30;
+
+/** Streaming: chunk length, how much is pre-rendered, and how far ahead we keep the queue. */
+const SF2_STREAM_CHUNK_SECONDS = 1;
+const SF2_STREAM_LEAD_CHUNKS = 2;
+const SF2_STREAM_LOOKAHEAD_SECONDS = 2;
+const SF2_STREAM_PUMP_MS = 200;
+const SF2_STREAM_MAX_CHUNKS_PER_PUMP = 4;
 
 /**
  * App level trim for the SF2 engine.
@@ -90,24 +102,6 @@ export function renderSF2Note(option) {
         })).sort((a, b) => a.frame - b.frame)
         : null);
 
-    // tsf_note_on at frame 0, tsf_note_off at noteFrames, render until the
-    // voices die or the tail cap is reached.
-    const rendered = font.renderNote(
-        presetIndex, option.pitch, velocity / 127, noteFrames, maxFrames, pitchBends, panChanges, interpolation);
-    if (!rendered.frames) return null;
-
-    const buffer = context.createBuffer(2, rendered.frames, sampleRate);
-    const left = buffer.getChannelData(0);
-    const right = buffer.getChannelData(1);
-    const data = rendered.data;
-    for (let i = 0, j = 0; i < rendered.frames; i++) {
-        left[i] = data[j++];
-        right[i] = data[j++];
-    }
-
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-
     // Shared stop gain: every note has exactly one universal mute.
     const stopGainNode = context.createGain();
     stopGainNode.gain.value = 1;
@@ -149,28 +143,106 @@ export function renderSF2Note(option) {
         });
     }
 
-    source.connect(performanceGain);
     performanceGain.connect(stopGainNode);
 
-    try {
-        source.start(start);
-    } catch (e) {
+    // --- synthesis, one chunk at a time ---------------------------------
+    // tsf_note_on at frame 0, tsf_note_off at noteFrames, render until the
+    // voices die or the tail cap is reached.
+    const isOffline = typeof OfflineAudioContext !== 'undefined' && context instanceof OfflineAudioContext;
+    const streaming = !isOffline && !(this.settings && this.settings.sf2Streaming === false);
+    const chunkFrames = streaming
+        ? Math.max(1024, Math.round(SF2_STREAM_CHUNK_SECONDS * sampleRate))
+        : maxFrames;
+    const scratch = streaming ? new Float32Array(chunkFrames * 2) : null;
+
+    const renderer = createNoteRenderer(
+        font, presetIndex, option.pitch, velocity / 127, noteFrames, maxFrames, pitchBends, panChanges, interpolation);
+
+    const sources = [];
+    let scheduledFrames = 0;
+    let stopped = false;
+    let timer = null;
+
+    const scheduleChunk = () => {
+        if (stopped) return false;
+        const first = renderer.frames;
+        const written = renderer.render(chunkFrames, scratch);
+        if (!written) return false;
+        const data = scratch
+            ? scratch
+            : renderer.buffer.subarray(first * 2, (first + written) * 2);
+
+        const buffer = context.createBuffer(2, written, sampleRate);
+        const left = buffer.getChannelData(0);
+        const right = buffer.getChannelData(1);
+        for (let i = 0, j = 0; i < written; i++) {
+            left[i] = data[j++];
+            right[i] = data[j++];
+        }
+
+        const source = context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(performanceGain);
+        source.onended = () => {
+            try { source.disconnect(); source.buffer = null; } catch (e) { /* noop */ }
+        };
         try {
-            source.start();
-        } catch (e2) {
-            console.warn('SF2: failed to start source', e2);
-            try { source.disconnect(); performanceGain.disconnect(); stopGainNode.disconnect(); } catch (e3) { /* noop */ }
-            return null;
+            source.start(start + scheduledFrames / sampleRate);
+        } catch (e) {
+            try {
+                source.start();
+            } catch (e2) {
+                try { source.disconnect(); } catch (e3) { /* noop */ }
+                return false;
+            }
+        }
+        sources.push(source);
+        scheduledFrames += written;
+        return true;
+    };
+
+    const pump = () => {
+        timer = null;
+        if (stopped) return;
+        let budget = SF2_STREAM_MAX_CHUNKS_PER_PUMP;
+        const scheduledUntil = () => start + scheduledFrames / sampleRate;
+        while (budget-- > 0 && !renderer.isDone()
+            && scheduledUntil() < context.currentTime + SF2_STREAM_LOOKAHEAD_SECONDS) {
+            if (!scheduleChunk()) return;
+        }
+        if (!renderer.isDone()) timer = setTimeout(pump, SF2_STREAM_PUMP_MS);
+    };
+
+    if (streaming) {
+        // Bounded start-up cost: only the first chunks are synthesized now.
+        for (let i = 0; i < SF2_STREAM_LEAD_CHUNKS && !renderer.isDone(); i++) {
+            if (!scheduleChunk()) break;
+        }
+        if (!renderer.isDone()) timer = setTimeout(pump, SF2_STREAM_PUMP_MS);
+    } else {
+        // Offline rendering: everything must be scheduled before startRendering().
+        while (!renderer.isDone()) {
+            if (!scheduleChunk()) break;
         }
     }
 
-    // The rendered buffer already contains the release, so there is nothing to
-    // schedule at note-off; this is only the universal mute for the stop
-    // manager (song stop / note stealing).
+    if (sources.length === 0) {
+        try { performanceGain.disconnect(); stopGainNode.disconnect(); } catch (e) { /* noop */ }
+        return null;
+    }
+
+    // The rendered chunks already contain the release, so there is nothing to
+    // schedule at note-off; this is the universal mute for the stop manager
+    // (song stop / note stealing) plus cancelling any pending synthesis.
     return () => {
+        stopped = true;
+        if (timer !== null) { clearTimeout(timer); timer = null; }
         try { stopGainNode.gain.setValueAtTime(0, context.currentTime); } catch (e) { /* noop */ }
-        try { source.stop(); } catch (e) { /* noop */ }
-        try { source.disconnect(); } catch (e) { /* noop */ }
+        for (const source of sources) {
+            try { source.stop(); } catch (e) { /* noop */ }
+            try { source.disconnect(); } catch (e) { /* noop */ }
+        }
+        sources.length = 0;
         try { performanceGain.disconnect(); } catch (e) { /* noop */ }
         try { stopGainNode.disconnect(); } catch (e) { /* noop */ }
     };

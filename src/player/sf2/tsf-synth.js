@@ -504,18 +504,21 @@ function voiceRender(font, v, out, offset, numSamples, interp) {
 }
 
 /**
- * Render one note offline into an interleaved stereo float32 buffer.
+ * Create a stateful note renderer.
  *
  * Mirrors `tsf_note_on` + `tsf_note_off` + `tsf_render_float` with the note
- * started at frame 0 and released after `noteOffFrames`.
+ * started at frame 0 and released after `noteOffFrames`, but lets the caller
+ * pull the audio in pieces: `render(frames)` produces the next slice, so a
+ * long note can be synthesized while it plays instead of in one blocking go.
  *
  * `pitchBends` are {frame, value} pairs (value in semitones). They are applied
  * to the voices at block boundaries, which is how TSF applies channel pitch
  * wheel changes (tsf_channel_applypitch -> tsf_voice_calcpitchratio).
  *
- * @returns {{data: Float32Array, frames: number}} interleaved LR samples
+ * @returns {{render: (frames:number, target?:Float32Array) => number,
+ *            isDone: () => boolean, buffer: Float32Array, frames: number}}
  */
-export function renderNote(font, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges, interpolation) {
+export function createNoteRenderer(font, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges, interpolation) {
     const interp = resolveInterpolation(interpolation);
     const voices = noteOnVoices(font, presetIndex, key, vel);
 
@@ -529,49 +532,112 @@ export function renderNote(font, presetIndex, key, vel, noteOffFrames, maxFrames
     let bendIndex = 0;
     let panIndex = 0;
 
-    for (;;) {
-        let alive = false;
-        for (const v of voices) { if (v.playingPreset !== -1) { alive = true; break; } }
-        if (!alive || written >= maxFrames) break;
+    const anyAlive = () => {
+        for (const v of voices) { if (v.playingPreset !== -1) return true; }
+        return false;
+    };
 
-        while (pitchBends && bendIndex < pitchBends.length && pitchBends[bendIndex].frame <= written) {
-            const semitones = pitchBends[bendIndex].value;
-            for (const v of voices) {
-                if (v.playingPreset !== -1) calcPitchRatio(v, semitones, font.outSampleRate);
+    return {
+        /** Total frames rendered so far. */
+        get frames() { return written; },
+        /** Internal buffer (only grows when rendering without a target). */
+        get buffer() { return out; },
+        /** True once every voice has finished or the frame cap was reached. */
+        isDone() { return !anyAlive() || written >= maxFrames; },
+
+        /**
+         * Render up to `frames` more frames.
+         *
+         * With `target` the slice is written into it starting at index 0 and
+         * the internal buffer is left alone, which is what streaming playback
+         * uses. Without it the slice is appended to the internal buffer, which
+         * is what the one shot renderNote() wrapper uses.
+         *
+         * @returns {number} frames written by this call
+         */
+        render(frames, target) {
+            const startWritten = written;
+            const remaining = maxFrames - written;
+            let want = Math.min(frames, remaining);
+
+            // TSF's envelopes advance once per TSF_RENDER_EFFECTSAMPLEBLOCK
+            // samples, so the block boundaries have to line up with a one shot
+            // render or the gain steps land on different samples. Aligning the
+            // chunk length keeps chunked output bit identical to whole note
+            // rendering (a final partial chunk is left as it is).
+            if (want >= TSF_RENDER_EFFECTSAMPLEBLOCK && want < remaining) {
+                want -= want % TSF_RENDER_EFFECTSAMPLEBLOCK;
             }
-            bendIndex++;
-        }
+            const limit = written + want;
 
-        while (panChanges && panIndex < panChanges.length && panChanges[panIndex].frame <= written) {
-            const pan = panChanges[panIndex].value;
-            for (const v of voices) {
-                if (v.playingPreset !== -1) applyChannelPan(v, pan);
+            // Voice rendering accumulates into the buffer, so a reused target
+            // (streaming) has to be cleared first - the internal buffer is
+            // zero filled once and only ever appended to.
+            if (target) target.fill(0, 0, (limit - written) * 2);
+
+            while (written < limit) {
+                if (!anyAlive()) break;
+
+                while (pitchBends && bendIndex < pitchBends.length && pitchBends[bendIndex].frame <= written) {
+                    const semitones = pitchBends[bendIndex].value;
+                    for (const v of voices) {
+                        if (v.playingPreset !== -1) calcPitchRatio(v, semitones, font.outSampleRate);
+                    }
+                    bendIndex++;
+                }
+
+                while (panChanges && panIndex < panChanges.length && panChanges[panIndex].frame <= written) {
+                    const pan = panChanges[panIndex].value;
+                    for (const v of voices) {
+                        if (v.playingPreset !== -1) applyChannelPan(v, pan);
+                    }
+                    panIndex++;
+                }
+
+                if (!released && written >= noteOffFrames) {
+                    noteOffVoices(font, voices, presetIndex, key);
+                    released = true;
+                }
+
+                const block = Math.min(TSF_RENDER_EFFECTSAMPLEBLOCK, limit - written);
+                if (!target && (written + block) * 2 > out.length) {
+                    const grown = new Float32Array(Math.max(out.length * 2, (written + block) * 2));
+                    grown.set(out.subarray(0, written * 2));
+                    out = grown;
+                }
+                // taken after the possible growth, so the block lands in the
+                // buffer that is actually big enough for it
+                const outBuffer = target || out;
+                const offset = target ? written - startWritten : written;
+                for (const v of voices) {
+                    if (v.playingPreset !== -1) voiceRender(font, v, outBuffer, offset, block, interp);
+                }
+                written += block;
             }
-            panIndex++;
-        }
 
-        if (!released && written >= noteOffFrames) {
-            noteOffVoices(font, voices, presetIndex, key);
-            released = true;
-        }
+            return written - startWritten;
+        },
+    };
+}
 
-        const block = Math.min(TSF_RENDER_EFFECTSAMPLEBLOCK, maxFrames - written);
-        if ((written + block) * 2 > out.length) {
-            const grown = new Float32Array(Math.max(out.length * 2, (written + block) * 2));
-            grown.set(out.subarray(0, written * 2));
-            out = grown;
-        }
-        for (const v of voices) {
-            if (v.playingPreset !== -1) voiceRender(font, v, out, written, block, interp);
-        }
-        written += block;
-    }
-
-    return { data: out.subarray(0, written * 2), frames: written };
+/**
+ * Render one whole note into an interleaved stereo float32 buffer.
+ *
+ * Convenience wrapper around createNoteRenderer() for offline use (analysis
+ * scripts, offline audio rendering).
+ *
+ * @returns {{data: Float32Array, frames: number}} interleaved LR samples
+ */
+export function renderNote(font, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges, interpolation) {
+    const renderer = createNoteRenderer(
+        font, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges, interpolation);
+    renderer.render(maxFrames);
+    return { data: renderer.buffer.subarray(0, renderer.frames * 2), frames: renderer.frames };
 }
 
 export default {
     renderNote,
+    createNoteRenderer,
     noteOnVoices,
     noteOffVoices,
     resolveInterpolation,
