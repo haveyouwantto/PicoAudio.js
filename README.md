@@ -269,7 +269,37 @@ PicoAudio.getTiming(time: number): number
 ## License
 Code released under the MIT License
 
+## SoundFont (SF2) 再生
+
+`soundQuality = 4` のとき、PicoAudio は SoundFont2 (.sf2) ファイルで発音します。
+エンジンは [TinySoundFont](https://github.com/schellingb/TinySoundFont) の JavaScript 移植版
+(`src/player/sf2/tsf-font.js`, `tsf-synth.js`, `tsf.js`) で、プリセット/ゾーンの解決、
+ボリューム/モジュレーション エンベロープ、フィルタ、LFO、ループ、パン、音量まで
+参照実装と同じ計算を使います。そのため C 版 TinySoundFont とほぼ同一の波形になり、
+ノート単位の照合で最大誤差 2.5e-6 です。
+
+```javascript
+// SoundFont2 ファイル (ArrayBuffer) を読み込む
+picoAudio.loadSF2(arrayBuffer);   // -> boolean
+picoAudio.isSF2Loaded();          // -> boolean
+
+// サンプル補間アルゴリズムを選ぶ
+//   'linear'  : 既定。TinySoundFont (参照実装) と同じ
+//   'nearest' : 最軽量、やや粗い
+//   'cubic'   : 4点 Catmull-Rom、最も滑らか
+picoAudio.setSF2Interpolation('cubic');
+picoAudio.getSF2Interpolation();
+```
+
+`settings.soundQuality = 4` と併せて `settings.sf2Interpolation` を直接設定しても構いません。
+ドラム (MIDI チャンネル 10) は GM のキットバンク (bank 128) からプリセットを選びます。
+
 
 ## Credits
 
 FM tones: [sneakernets/DMXOPL](https://github.com/sneakernets/DMXOPL) (MIT License)
+
+SF2 synthesis: [TinySoundFont](https://github.com/schellingb/TinySoundFont)
+© Bernhard Schelling, based on SFZero © Steve Folta (MIT License) — ported to JavaScript in
+`src/player/sf2/tsf-font.js`, `src/player/sf2/tsf-synth.js` and `src/player/sf2/tsf.js`.
+The upstream copyright notice is kept in those files.
