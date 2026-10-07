@@ -1,15 +1,24 @@
 {
   "name": "@maple-kaede/picoaudio",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "PicoAudio.js is light MIDI player using Web Audio API",
   "main": "dist/nodejs/picoaudio.js",
   "module": "dist/nodejs/picoaudio.mjs",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist/**/*.js",
     "dist/**/*.mjs"
   ],
   "scripts": {
     "build": "rollup -c",
+    "build:full": "rollup -c --environment PICO_VARIANTS:full",
+    "build:sf2": "rollup -c --environment PICO_VARIANTS:sf2",
+    "build:sf2-wave-nodefault": "rollup -c --environment PICO_VARIANTS:sf2-wave-nodefault",
+    "build:wave": "rollup -c --environment PICO_VARIANTS:wave",
+    "build:wave-nodefault": "rollup -c --environment PICO_VARIANTS:wave-nodefault",
+    "build:basic": "rollup -c --environment PICO_VARIANTS:basic",
     "build:map": "rollup -cm",
     "watch": "rollup -mw -c watch.rollup.config.js",
     "lint": "eslint src"

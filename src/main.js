@@ -21,8 +21,8 @@ import parseSMF from './smf/parse-smf.js';
 
 import startWebMIDI from './web-midi/start-web-midi.js';
 import { loadWaves } from './player/sound-source/periodic-wave-man.js';
-import { loadSamples } from './player/sound-source/soundbank.js';
 import { loadSF2, isSF2Loaded } from './player/sound-source/sf2-provider.js';
+import { HAS_SF2, HAS_WAVE } from './features.js';
 
 class PicoAudio {
     /**
@@ -255,14 +255,17 @@ class PicoAudio {
     }
 
     loadWaves(buffer) {
+        if (!HAS_WAVE) return;
         loadWaves(buffer)
     }
 
     loadSamples(buffer) {
-        loadSamples(buffer)
+        // The sample bank engine (soundQuality 3) was removed; 3 now plays SF2.
+        console.warn("PicoAudio: loadSamples() is deprecated, use loadSF2()");
     }
 
     loadSF2(buffer) {
+        if (!HAS_SF2) return false;
         // loadSF2 needs AudioContext — use the one from the instance
         if (!this.context) {
             console.error('SF2: AudioContext not initialized');
@@ -272,6 +275,7 @@ class PicoAudio {
     }
 
     isSF2Loaded() {
+        if (!HAS_SF2) return false;
         return isSF2Loaded();
     }
     
@@ -279,5 +283,8 @@ class PicoAudio {
         return this.playData?.lastEventTime ?? 0;
     }
 }
+
+/** Which optional engines this build contains (rollup replaces features.js). */
+PicoAudio.features = { wave: HAS_WAVE, sf2: HAS_SF2 };
 
 export default PicoAudio;

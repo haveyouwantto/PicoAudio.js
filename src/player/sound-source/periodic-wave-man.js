@@ -1,5 +1,6 @@
 import defaultWave from "./default-wave";
 import { miniIFFT } from "../audio/dsp";
+import { HAS_DEFAULT_WAVE, HAS_WAVE } from "../../features.js";
 
 // Wavetable size: power-of-2 for IFFT, 2048 samples = one cycle
 const WAVETABLE_SIZE = 2048;
@@ -224,32 +225,40 @@ function parseInstruments(arrayBuffer) {
         }
     }
 
-    console.log(instruments)
     return instruments;
 }
 
 // Variable to store parsed instruments
 let instruments = null;
 
+/** Whether a wave table is available (built in or supplied by loadWaves). */
+export function isWaveLoaded() {
+    return instruments !== null;
+}
+
 // Function to load waves from a buffer
 export function loadWaves(buffer) {
-    // If no buffer is provided, load default periodic wave table
+    // If no buffer is provided, load the built in periodic wave table (a build
+    // without it - wave-nodefault - expects the host to supply its own).
     if (!buffer) {
-        var b = base64ToBuffer(defaultWave.instrumentData);
-        instruments = parseInstruments(b);
-    } else {
-        try {
-            // Parse instruments from the provided buffer
-            instruments = parseInstruments(buffer);
-        } catch (e) {
-            // If an error occurs during parsing, load default waves
-            loadWaves();
-        }
+        if (!HAS_DEFAULT_WAVE) return;
+        buffer = base64ToBuffer(defaultWave.instrumentData);
+    }
+    try {
+        // Parse instruments from the provided buffer
+        instruments = parseInstruments(buffer);
+    } catch (e) {
+        // If an error occurs during parsing, load the built in table instead
+        if (HAS_DEFAULT_WAVE) loadWaves();
     }
 }
 
-// Load waves initially
-loadWaves();
+// Load the built in wave table. Without it (or without the wavetable mode at
+// all) the rest of this module has no side effects, so a build that turns the
+// flags off can drop it - and the embedded table - completely.
+if (HAS_WAVE && HAS_DEFAULT_WAVE) {
+    loadWaves();
+}
 
 // Generate a random phase value between -π and π
 function getRandomPhase() {
@@ -290,6 +299,7 @@ function createWave(inst) {
 
 // Get the waveform for a specific instrument and octave (default octave is 2)
 export function getWave(context, instId, octave = 2) {
+    if (!instruments) return silentInstrument;
     let inst = instruments[octave][instId];
     // Check if the waveform for the given instrument and octave is already cached
     if (inst.wave) {
@@ -373,6 +383,16 @@ function harmonicToTimeDomain(real, imag) {
  * @returns {Object} instrument data with .wavetable (AudioBuffer) and .adsr
  */
 export function getWaveTable(context, instId, octave = 2) {
+    // No table loaded (build without the embedded one, loadWaves() not called
+    // yet): return a silent instrument instead of throwing, the engine then
+    // plays an empty buffer until the host supplies its own table.
+    if (!instruments) {
+        if (!silentInstrument.warned) {
+            silentInstrument.warned = true;
+            console.warn("PicoAudio: wavetable mode used before loadWaves()");
+        }
+        return silentInstrument;
+    }
     let inst = instruments[octave][instId];
     // Already cached?
     if (inst.wavetable) {
@@ -398,5 +418,8 @@ export function getVolumeMul(note) {
     const i = Math.floor(val);
     return volumes[i] + (volumes[i + 1] - volumes[i]) * (val - i);
 }
+
+/** Placeholder returned while no wavetable is loaded: no buffer, no envelope. */
+const silentInstrument = { adsr: [0, 0, 0, 0], vibrato: 0, wavetable: null };
 
 export { quickfadeArray, findClosestNumberIndex, WAVETABLE_SIZE };

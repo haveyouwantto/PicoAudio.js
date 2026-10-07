@@ -4,6 +4,7 @@ import { generatePinkNoise } from '../player/audio/sound-gen.js';
 import AudioUtil from '../util/audio-util.js';
 import Waveform from '../player/audio/dsp.js';
 import { flushSF2Streaming } from '../player/sound-source/sf2-renderer.js';
+import { HAS_SF2 } from '../features.js';
 
 export default function init(argsObj) {
     if (this.isStarted) return;
@@ -19,7 +20,7 @@ export default function init(argsObj) {
     // バックグラウンドのタブはタイマーが間引かれるため、SF2 のストリーミング合成
     // （残りを少しずつ合成する方式）では音が途切れうる。非表示になったら、
     // 再生中の音符の残りをその場で全て合成し、以降の音符は一括合成に切り替える。
-    if (typeof document !== 'undefined' && document.addEventListener) {
+    if (HAS_SF2 && typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('visibilitychange', () => {
             const hidden = document.visibilityState === 'hidden';
             this.settings.sf2Streaming = !hidden;

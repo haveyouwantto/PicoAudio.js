@@ -1,18 +1,20 @@
 import InterpolationUtil from "../../util/interpolation-util";
 import { getWave, getWaveTable, quickfadeArray, findClosestNumberIndex, getVolumeMul, WAVETABLE_SIZE } from "./periodic-wave-man";
-import { getSample } from "./soundbank";
 import { renderSF2Note } from "./sf2-renderer";
+import { HAS_SF2, HAS_WAVE } from "../../features.js";
+import { resolveSoundQuality } from "../sound-quality.js";
 
 export default function createNote(option) {
+    const quality = resolveSoundQuality(this.settings);
     // SF2 SoundFont mode: the renderer builds its own complete audio graph
     // (zone/layer selection, envelope, filters, LFOs), so we bypass
     // createBaseNote entirely to avoid creating a bare BufferSource.
-    if (this.settings.soundQuality == 4) {
+    if (HAS_SF2 && quality == 4) {
         return renderSF2Note.call(this, option);
     }
 
-    const isBuffer = this.settings.soundQuality == 1 || this.settings.soundQuality == 3 || this.settings.soundQuality == 4;
-    const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1 || this.settings.soundQuality == 4;
+    const isBuffer = (HAS_WAVE && quality == 1) || (HAS_SF2 && quality == 4);
+    const needsFilter = (HAS_WAVE && (quality == 1 || quality == -1)) || (HAS_SF2 && quality == 4);
     const note = this.createBaseNote(option, isBuffer, true, false, true, needsFilter); // oscillatorのstopはこちらで実行するよう指定
     if (note.isGainValueZero) return null;
 
@@ -28,7 +30,7 @@ export default function createNote(option) {
     // 音色の設定 //
     gainNode.gain.value *= this.settings.instrumentAttenuation;  // Instrument volume attenuation
 
-    switch (this.settings.soundQuality) {
+    switch (quality) {
         case -1:
             break;
         case 0:
@@ -78,8 +80,11 @@ export default function createNote(option) {
             break;
 
         case 1: {
+            if (!HAS_WAVE) break;
             const inst = getWaveTable(this.context, option.instrument, findClosestNumberIndex(option.pitch));
-            oscillator.buffer = inst.wavetable;
+            // No table loaded yet (build without the built in one, loadWaves()
+            // not called): leave the source empty, it plays silence.
+            if (inst.wavetable) oscillator.buffer = inst.wavetable;
             // Set playbackRate so the wavetable cycles at the correct frequency.
             // wavetable recorded at sampleRate has fund freq = sampleRate / WAVETABLE_SIZE,
             // so we need playbackRate = targetFreq * WAVETABLE_SIZE / sampleRate.
@@ -142,36 +147,11 @@ export default function createNote(option) {
             break;
         }
 
-        case 3:
-            oscillator.loop = !quickfadeArray[option.instrument];
-            const octave = findClosestNumberIndex(option.pitch);
-            const sample = getSample(this.context, option.instrument, octave);
-
-            if (sample && sample instanceof Promise) {
-                sample.then(decoded => {
-                    if (decoded) {
-                        oscillator.buffer = decoded;
-                    }
-                }).catch(err => {
-                    console.error(err);
-                }
-                );
-            } else if (sample) {
-                oscillator.buffer = sample;
-            }
-
-            const baseNote = 45 + octave * 12;
-            oscillator.basePitch = (option.pitch - baseNote) * 100;
-            oscillator.detune.value = oscillator.basePitch;
-            const loopEnd = Math.max((sample.duration ?? 2) - 0.2, 2);
-            oscillator.loopStart = Math.max(loopEnd - 1, 0.2);
-            oscillator.loopEnd = loopEnd;
-            break;
-
         case 4: {
             // SF2 SoundFont sample playback — delegated to sf2-renderer.js.
             // (createNote short-circuits above for soundQuality=4, this is a
             // defensive fallback for direct calls.)
+            if (!HAS_SF2) break;
             return renderSF2Note.call(this, option);
         }
     }
@@ -184,7 +164,7 @@ export default function createNote(option) {
     }
 
     // 減衰の設定 //
-    switch (this.settings.soundQuality) {
+    switch (quality) {
         case 0:
             switch (this.channels[note.channel][1] / 10 || option.instrument) {
                 // ピッチカート系減衰
@@ -255,6 +235,7 @@ export default function createNote(option) {
             break;
         case -1:
         case 1: {
+            if (!HAS_WAVE) break;
             // quality=1: inst already resolved & cached by the waveform selection block above
             let inst = note._inst;
             if (!inst) inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
@@ -376,23 +357,11 @@ export default function createNote(option) {
         }
             break;
 
-        case 3:
-            {
-                let inst2 = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
-                let instEnvelope2 = inst2.adsr;
-                const release3 = instEnvelope2[3];
-                let vel3 = gainNode.gain.value * 1.5;
-                gainNode.gain.setValueAtTime(vel3, note.start);
-                const releaseClamped3 = Math.min(release3, 0.25);
-                gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped3 / 3);
-                this.stopAudioNode(oscillator, note.stop + releaseClamped3, stopGainNode, isNoiseCut);
-                break;
-            }
-
         case 4: {
             // SF2 envelope scheduling now lives in sf2-renderer.js.
             // This case is unreachable for soundQuality=4 (short-circuited above),
             // kept only as a safe no-op fallback.
+            if (!HAS_SF2) break;
             break;
         }
     }

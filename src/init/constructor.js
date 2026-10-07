@@ -1,3 +1,5 @@
+import { HAS_SF2, HAS_WAVE } from '../features.js';
+
 /*
 argsObj {
     debug,
@@ -51,6 +53,17 @@ export default function picoAudioConstructor(argsObj) {
     rewriteVar(this, argsObj, "debug");
     for (let key in this.settings) {
         rewriteVar(this.settings, argsObj, key);
+    }
+
+    // soundQuality 3 was the sample bank; that engine is gone, 3 means SF2.
+    if (this.settings.soundQuality == 3) this.settings.soundQuality = 4;
+
+    // A build without the wavetable / SF2 engine cannot run the matching
+    // soundQuality values, so fall back to the basic oscillator mode.
+    const quality = this.settings.soundQuality;
+    if ((quality == 1 && !HAS_WAVE) || (quality == 4 && !HAS_SF2)) {
+        this.settings.soundQuality = 0;
+        console.warn(`PicoAudio: soundQuality ${quality} is not included in this build, using 0`);
     }
 
     this.events = [];

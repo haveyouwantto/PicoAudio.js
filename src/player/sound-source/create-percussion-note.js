@@ -1,13 +1,15 @@
-import { getDrumSample } from "./soundbank";
 import { renderSF2Note } from "./sf2-renderer";
+import { HAS_SF2 } from "../../features.js";
+import { resolveSoundQuality } from "../sound-quality.js";
 
 export default function createPercussionNote(option) {
+    const quality = resolveSoundQuality(this.settings);
     // SF2 SoundFont mode: delegated to sf2-renderer.js (same graph as melodic).
-    if (this.settings.soundQuality == 4) {
+    if (HAS_SF2 && quality == 4) {
         return renderSF2Note.call(this, { ...option, isDrum: true });
     }
 
-    const needsFilter = this.settings.soundQuality == 1 || this.settings.soundQuality == -1 || this.settings.soundQuality == 4;
+    const needsFilter = (quality == 1 || quality == -1) || (HAS_SF2 && quality == 4);
     const note = this.createBaseNote(option, true, false, false, false, needsFilter);
     if (note.isGainValueZero) return null;
 
@@ -29,27 +31,21 @@ export default function createPercussionNote(option) {
     if (start < this.context.currentTime) start = this.context.currentTime;
     let stopAudioTime = 0;
     let stopAudioTime2 = 0;
-    switch (this.settings.soundQuality) {
+    switch (quality) {
         case 4:
             // SF2 SoundFont drum playback is handled by the top-level shortcut
             // (renderSF2Note). This case is a defensive fallback.
+            if (!HAS_SF2) break;
             gainNode.gain.value = 0;
             gainNode2.gain.value = 0;
             stopAudioTime = 0.01;
             stopAudioTime2 = 0;
             break;
-        case 3:
-            gainNode.gain.value = velocity * 1.5;
-            gainNode2.gain.value = 0;
-            source.loop = false;
-            stopAudioTime = 2;
-            stopAudioTime2 = 2;
-            getDrumSample(this.context, option.pitch).then(sample => {
-                source.buffer = sample;
-            });
-            break;
         case 1:
             {
+                // The percussion kit is synthesised from oscillators and noise,
+                // it needs neither a wavetable nor a soundfont, so it is part of
+                // every build (it is upstream behaviour).
                 switch (option.pitch) {
                     // 新しいパーカッション音源（旧音源の置き換え） //
 

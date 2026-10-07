@@ -303,6 +303,52 @@ picoAudio.getSF2Interpolation();
 再生中の音符の残りを全て合成し、以降の音符は一括合成に切り替えます (音が途切れません)。
 
 
+## Build variants / ビルドバリエーション
+
+Four bundles are built from the same sources. They only differ in which sound
+engines are compiled in: `src/features.js` is replaced per variant, so the
+excluded engines (and the embedded waveform table) are dropped from the bundle
+instead of merely being switched off at runtime.
+
+| variant | nodejs esm | `soundQuality` | size (nodejs esm) |
+| --- | --- | --- | --- |
+| `full` (default) | `dist/nodejs/picoaudio.mjs` | 0, 1, 4 | 341 KB |
+| `sf2-wave-nodefault` | `dist/nodejs/picoaudio.sf2-wave-nodefault.mjs` | 0, 1, 4 (no built in table) | 302 KB |
+| `sf2` | `dist/nodejs/picoaudio.sf2.mjs` | 0, 4 | 279 KB |
+| `wave` | `dist/nodejs/picoaudio.wave.mjs` | 0, 1 | 232 KB |
+| `wave-nodefault` | `dist/nodejs/picoaudio.wave-nodefault.mjs` | 0, 1 (no built in table) | 192 KB |
+| `basic` | `dist/nodejs/picoaudio.basic.mjs` | 0 | 170 KB |
+
+Every variant is also built for the browser as
+`dist/browser/PicoAudio[.variant].js` and `.min.js`.
+
+`soundQuality` 0 is the basic oscillator mode (the upstream PicoAudio feature
+set), 1 the periodic wave / wavetable mode and 4 SoundFont 2 playback
+(`loadSF2`). The old sample bank value 3 is gone: 3 now plays SF2. The `basic`
+build keeps percussion, that kit is synthesised from oscillators and noise,
+like upstream.
+
+```bash
+npm run build                # build every variant
+npm run build:full           # ...or one of them:
+npm run build:sf2            # build:sf2-wave-nodefault, build:wave,
+npm run build:wave           # build:wave-nodefault, build:basic
+```
+
+At runtime `PicoAudio.features` reports what a bundle contains, e.g.
+`{ wave: true, sf2: true }`.
+
+Engines that are not ready are never used: selecting `soundQuality` 1 or 4
+without a loaded wavetable / soundfont - or in a build that does not contain
+that engine at all - plays the basic waveform engine instead, so a player that
+has not prepared its sound source still makes sound. `loadSF2()` returns
+`false` in builds without the SF2 engine, and `loadSamples()` is a deprecated
+no-op (that engine is gone).
+
+The `wave-nodefault` build carries no waveform table at all, so a host that
+wants the wavetable mode must supply its own: `picoAudio.loadWaves(buffer)`
+before the first note. Until then `soundQuality: 1` plays the basic engine.
+
 ## Credits
 
 FM tones: [sneakernets/DMXOPL](https://github.com/sneakernets/DMXOPL) (MIT License)
