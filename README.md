@@ -1,92 +1,99 @@
 # PicoAudio.js
 
-Web Audio API で MIDI (Standard MIDI File = SMF) を再生する JavaScript ライブラリです。
-[cagpie/PicoAudio.js](https://github.com/cagpie/PicoAudio.js) のフォークで、発音エンジンを
-3 種類から選べるようにし、必要なエンジンだけを含む複数のビルドを追加しています。
+A JavaScript library that parses and plays Standard MIDI Files on the web with
+the Web Audio API. This is a fork of
+[cagpie/PicoAudio.js](https://github.com/cagpie/PicoAudio.js) that adds three
+switchable sound engines and builds that contain only the engines you need.
 
-This is a fork of [cagpie/PicoAudio.js](https://github.com/cagpie/PicoAudio.js) with
-three switchable sound engines and selectable builds, so a player can ship only the
-engines it needs.
+[日本語はこちら / Japanese](README.ja.md)
 
-| `settings.soundQuality` | engine | needs an asset |
+| `settings.soundQuality` | engine | asset needed |
 | --- | --- | --- |
-| `0` | 8-bit style basic waveforms (upstream oscillators) | no |
+| `0` | 8-bit style basic waveforms (upstream oscillators) | none |
 | `1` (default) | additive synthesis from a wavetable instrument set | built in table, or `loadWaves()` |
-| `3` | deprecated slot, kept as an alias of `4` | - |
-| `4` | SoundFont 2 (.sf2) playback, including GM drum kits | `loadSF2(buffer)` |
+| `3` | deprecated slot, kept as an alias of `4` | – |
+| `4` | SoundFont 2 (`.sf2`) playback, GM drum kits included | `loadSF2(buffer)` |
 
-## 主な機能 / Features
-- MIDIファイル(SMF)のパースと再生、noteOn/noteOff イベント
-- `soundQuality` 0/1/4 の切り替え。1 は GM 128 音色 × 5 オクターブの加算合成
-  (撥弦系にはフィルタ掃引付き)、4 は TinySoundFont 移植版または Web Audio ノードで SF2 を再生
-- 長い音符のチャンク合成、オフライン描画 (`OfflineAudioContext`)、WAV 書き出し
-- ビルドバリエーション: `basic` / `wave` / `wave-nodefault` / `sf2` /
-  `sf2-wave-nodefault` / `full` (169 KB 〜 341 KB、[Build variants](#build-variants--ビルドバリエーション))
-- 音源が未読み込みのときは自動で basic エンジンにフォールバック
+## Features
 
-## サンプル / Samples (upstream のデモ / demos of the upstream library)
+- Parses SMF (Standard MIDI File) and plays it back, including noteOn/noteOff
+  events
+- `soundQuality` 0 / 1 / 4: basic oscillators, additive synthesis from a
+  128 program x 5 octave wavetable set (plucked programs get a filter sweep),
+  or SoundFont 2 played by a TinySoundFont port or by native Web Audio nodes
+- Chunked synthesis for very long notes, offline rendering
+  (`OfflineAudioContext`) and WAV export
+- Engines that are not ready are never used: a wavetable / soundfont mode
+  without its table / font loaded plays the basic engine instead
+- Build variants: `basic` / `wave` / `wave-nodefault` / `sf2` /
+  `sf2-wave-nodefault` / `full` (170 KB - 341 KB, see
+  [Build variants](#build-variants))
+
+## Samples
+
+Demos of the upstream library:
 
 - [Sample1](https://cagpie.github.io/PicoAudio.js/sample/cdn-sample1.html)
 - [Sample2](https://cagpie.github.io/PicoAudio.js/sample/cdn-sample2.html)
 
-## 利用されているプロダクト / Used by
+## Used by
 
 - [Picotune](http://picotune.me) by @cagpie
 - [Tonyu System 2](https://www.tonyu.jp/Tonyu2.php) by @hoge1e3
-  (どちらも upstream の PicoAudio.js を利用しています / both use upstream PicoAudio.js)
 
-## 導入方法
+(both use the upstream PicoAudio.js)
+
+## Install
 
 ### Browser
+
 ```html
-<script src="https://unpkg.com/@maple-kaede/picoaudio/dist/browser/PicoAudio.js"></script>
-または、
 <script src="https://unpkg.com/@maple-kaede/picoaudio/dist/browser/PicoAudio.min.js"></script>
 ```
-※ グローバル変数に `PicoAudio` が定義されます
-※ ビルドバリエーションを使う場合は `PicoAudio.basic.min.js` などのファイル名に置き換えてください
 
+A global `PicoAudio` is defined. Use `PicoAudio.basic.min.js`,
+`PicoAudio.wave.min.js`, ... to load a smaller build variant.
 
 ### Module
+
 ```bash
-$ npm install @maple-kaede/picoaudio
+npm install @maple-kaede/picoaudio
 ```
-https://www.npmjs.com/package/@maple-kaede/picoaudio
 
-## はじめ方
+## Getting started
 
-### 初期化
+### Create an instance
 
 ```javascript
 const picoAudio = new PicoAudio();
 picoAudio.init();
 ```
 
-
-### 再生
+### Play
 
 ```javascript
-// Standard MIDI Fileの準備
-const file = /* FileReaderやFetchなどで取得 */
+// Prepare a Standard MIDI File
+const file = /* from FileReader, fetch, ... */
 const smfData = new Uint8Array(file);
 
-// SMF形式のバイナリのパースを行う
+// Parse the SMF binary
 const parsedData = picoAudio.parseSMF(smfData);
 
-// パースしたデータをセット
+// Hand the parsed data to the player
 picoAudio.setData(parsedData);
 
-// 再生
+// Play
 picoAudio.play();
 ```
-※ `PicoAudio.play` メソッドは、ユーザのジェスチャーイベントから呼び出す必要がある場合があります ([参考](https://developers.google.com/web/updates/2017/09/autoplay-policy-changes#webaudio))
+Note: `PicoAudio.play` may have to be called from a user gesture
+([reference](https://developers.google.com/web/updates/2017/09/autoplay-policy-changes#webaudio)).
 
-### 停止
+### Stop
+
 ```javascript
-// 一時停止
+// Pause
 picoAudio.pause();
 ```
-
 
 ## API
 
@@ -94,94 +101,114 @@ picoAudio.pause();
 
 #### PicoAudio.init
 ```typescript
-// PicoAudioインスタンスの生成
+// Create a PicoAudio instance
 new PicoAudio({
-  debug: boolean, // デバッグON/OFF
-  audioContext: AudioContext, // 生成済みのAudioContextを再利用
-  picoAudio: PicoAudio, // 生成済みのPicoAudioインスタンスを再利用
+  debug: boolean, // debug on/off
+  audioContext: AudioContext, // reuse an existing AudioContext
+  picoAudio: PicoAudio, // reuse an existing PicoAudio instance
 }): PicoAudio
 ```
-※ 細かいパラメータも設定可能 ([参考](https://github.com/cagpie/PicoAudio.js/blob/master/src/init/constructor.js))
+Every entry of `settings` can be overridden through the same object (see
+[constructor.js](https://github.com/haveyouwantto/PicoAudio.js/blob/master/src/init/constructor.js)).
 
 #### PicoAudio.parseSMF
 ```typescript
-// SMFファイルをパースし、PicoAudioで再生できる形式にする
-// ピアノロールの描画を行いたい場合などに、ParsedSMFが利用できる
+// Parse an SMF file into the format PicoAudio plays back
+// The ParsedSMF is also useful for drawing a piano roll etc.
 PicoAudio.parseSMF(smfFile: Uint8Array): ParsedSMF
 ```
 
 #### PicoAudio.setData
 ```typescript
-// パースされたデータをセットする
+// Set the parsed data
 PicoAudio.setData(parsedSMF: ParsedSMF): void
 ```
 
 #### PicoAudio.play
 ```typescript
-// セットされているデータで再生する
+// Play the data that is currently set
 PicoAudio.play(isLoop: boolean): void
 ```
 
 #### PicoAudio.pause
 ```typescript
-// 楽曲の一時停止
+// Pause playback
 PicoAudio.pause(): void
 ```
 
 #### PicoAudio.initStatus
 ```typescript
-// 再生状態の初期化
+// Reset the playback state
 PicoAudio.initStatus(): void
 ```
 
 #### PicoAudio.setStartTime
 ```typescript
-// 再生開始位置の設定
+// Set the playback position
 PicoAudio.setStartTime(offseTime: number) :void
 ```
 
-#### ステータスのSetter/Getter
+#### Status setters / getters
 ```typescript
-// 全体音量の設定
+// Master volume
 PicoAudio.getMasterVolume(): number
 PicoAudio.setMasterVolume(volume: number): void
 
-// リバーブの設定
+// Reverb
 PicoAudio.isReverb(): boolean
 PicoAudio.setReverb(enable: boolean): void
 PicoAudio.getReverbVolume(): number
 PicoAudio.setReverbVolume(volume: number): void
 
-// コーラスの設定
+// Chorus
 PicoAudio.isChorus(): boolean
 PicoAudio.setChorus(enable: boolean): void
 PicoAudio.getChorusVolume(): number
 PicoAudio.setChorusVolume(volume: number): void
 
-// チャンネルの音色情報や音量の設定
+// Per channel instrument and volume
 PicoAudio.initChannels(): void
 PicoAudio.getChannels(): Array
 PicoAudio.setChannels(channels: Array): void
 
-// ループの設定
+// Looping
 PicoAudio.isLoop(): boolean
 PicoAudio.setLoop(enable: boolean): void
 
-// Web MIDI APIの設定
+// Web MIDI API
 PicoAudio.isWebMIDI(): boolean
 PicoAudio.setWebMIDI(enable: boolean): void
 
-// Control Change 111 のループの設定
+// Control Change 111 looping
 PicoAudio.isCC111(): boolean
 PicoAudio.setCC111(enable: boolean): void
 ```
 
+#### Sound sources
+```typescript
+// Which engines this build contains: { wave: boolean, sf2: boolean }
+PicoAudio.features
 
-### Event周辺
+// Wavetable instrument set (soundQuality 1) as a binary buffer
+PicoAudio.loadWaves(buffer: ArrayBuffer): void
+
+// SoundFont 2 file (soundQuality 4)
+PicoAudio.loadSF2(buffer: ArrayBuffer): boolean
+PicoAudio.isSF2Loaded(): boolean
+
+// Sample interpolation: 'linear' (default, TinySoundFont), 'nearest', 'cubic'
+PicoAudio.setSF2Interpolation(mode): void
+PicoAudio.getSF2Interpolation(): string
+
+// Removed engine, kept as a no-op: 3 now plays the SoundFont engine
+PicoAudio.loadSamples(buffer: ArrayBuffer): void
+```
+
+### Events
 
 #### PicoAudio.addEventListener
 ```typeScript
-// イベントリスナを登録
+// Register an event listener
 PicoAudio.addEventListener(
   type: <'play' | 'pause' | 'noteOn' | 'noteOff' | 'songEnd'>,
   listener: Function
@@ -190,26 +217,25 @@ PicoAudio.addEventListener(
 
 ##### PicoAudio.addEventListener (noteOn)
 ```typescript
-// 音の開始イベントのリスナ登録ができる
-// 発音される音のタイミングや高さ、強さなどが取得できる
+// Listen to note starts: timing, pitch and velocity of every note
 PicoAudio.addEventListener(
   type: 'noteOn',
   listener: (event: NoteEvent) => void
 ): void
 
 type NoteEvent = {
-  channel: number, // チャンネル(0-15)
-  instrument: number, // 楽器の種類(0-127)
+  channel: number, // channel (0-15)
+  instrument: number, // instrument (0-127)
 
-  start: number, // 音の始まりのタイミング(tick=SMF時間)
-  stop: number, // 音の終わりのタイミング(tick)
-  startTime: number, // 音の始まりのタイミング(秒数)
-  stopTime: number, // 音の終わりのタイミング(秒数)
+  start: number, // note start (tick = SMF time)
+  stop: number, // note end (tick)
+  startTime: number, // note start (seconds)
+  stopTime: number, // note end (seconds)
 
-  velocity: number, // ベロシティ(0-1)
-  pitch: number, // 音の高さ(0-127)
+  velocity: number, // velocity (0-1)
+  pitch: number, // pitch (0-127)
 
-  // CCパラメータ
+  // CC parameters
   pan: CCEvent[],
   pitchBend: CCEvent[],
   expression: CCEvent[],
@@ -219,15 +245,15 @@ type NoteEvent = {
 }
 
 type CCEvent = {
-  timing: number, // タイミング(tick)
-  time: number, // タイミング(秒数)
-  value: number // 値(0-127)
+  timing: number, // timing (tick)
+  time: number, // timing (seconds)
+  value: number // value (0-127)
 }
 ```
 
 ##### PicoAudio.addEventListener (noteOff)
 ```typescript
-// 音の終了イベントのリスナ登録ができる
+// Listen to note ends
 PicoAudio.addEventListener(
   type: 'noteOff',
   listener: (event: NoteEvent) => void
@@ -236,7 +262,7 @@ PicoAudio.addEventListener(
 
 #### removeEventListener
 ```typescript
-// 指定のイベントリスナを解除
+// Remove one listener
 PicoAudio.removeEventListener(
   type: <'play' | 'pause' | 'noteOn' | 'noteOff' | 'songEnd'>,
   listener: Function
@@ -245,72 +271,73 @@ PicoAudio.removeEventListener(
 
 #### removeAllEventListener
 ```typescript
-// 指定typeのイベントリスナをすべて解除
+// Remove every listener of one type
 PicoAudio.removeAllEventListener(
   type: <'play' | 'pause' | 'noteOn' | 'noteOff' | 'songEnd'>
 ): void
 ```
 
-### SMFパース周辺
+### SMF parsing
 #### parsed SMF
 ```typescript
-// 準備中
+// work in progress
 ```
 
-##### 変換関数
+##### Conversion helpers
 ##### PicoAudio.getTime
 ```typescript
-// tick から 時間に変換 (テンポも考慮される)
+// tick -> seconds (tempo changes are taken into account)
 PicoAudio.getTime(tick: number): number
 ```
 
 ##### PicoAudio.getTiming
 ```typescript
-// 時間からtickに変換
+// seconds -> tick
 PicoAudio.getTiming(time: number): number
 ```
-
 
 ## License
 Code released under the MIT License
 
-## SoundFont (SF2) 再生
+## SoundFont (SF2) playback
 
-`soundQuality = 4` のとき、PicoAudio は SoundFont2 (.sf2) ファイルで発音します。
-エンジンは [TinySoundFont](https://github.com/schellingb/TinySoundFont) の JavaScript 移植版
-(`src/player/sf2/tsf-font.js`, `tsf-synth.js`, `tsf.js`) で、プリセット/ゾーンの解決、
-ボリューム/モジュレーション エンベロープ、フィルタ、LFO、ループ、パン、音量まで
-参照実装と同じ計算を使います。そのため C 版 TinySoundFont とほぼ同一の波形になり、
-ノート単位の照合で最大誤差 2.5e-6 です。
+With `soundQuality = 4` PicoAudio plays SoundFont 2 (`.sf2`) files. The engine is
+a JavaScript port of [TinySoundFont](https://github.com/schellingb/TinySoundFont)
+(`src/player/sf2/tsf-font.js`, `tsf-synth.js`, `tsf.js`): preset/zone resolution,
+volume and modulation envelopes, filters, LFOs, loops, pan and gain all use the
+same maths as the reference implementation, so the waveform matches the C
+version to within 2.5e-6 in per note comparisons.
 
 ```javascript
-// SoundFont2 ファイル (ArrayBuffer) を読み込む
+// Load a SoundFont 2 file (ArrayBuffer)
 picoAudio.loadSF2(arrayBuffer);   // -> boolean
 picoAudio.isSF2Loaded();          // -> boolean
 
-// サンプル補間アルゴリズムを選ぶ
-//   'linear'  : 既定。TinySoundFont (参照実装) と同じ
-//   'nearest' : 最軽量、やや粗い
-//   'cubic'   : 4点 Catmull-Rom、最も滑らか
+// Pick the sample interpolation
+//   'linear'  : default, same as TinySoundFont (the reference implementation)
+//   'nearest' : cheapest, a bit rough
+//   'cubic'   : 4 point Catmull-Rom, smoothest
 picoAudio.setSF2Interpolation('cubic');
 picoAudio.getSF2Interpolation();
 ```
 
-`settings.soundQuality = 4` と併せて `settings.sf2Interpolation` を直接設定しても構いません。
-ドラム (MIDI チャンネル 10) は GM のキットバンク (bank 128) からプリセットを選びます。
+`settings.soundQuality = 4` and `settings.sf2Interpolation` can be set directly
+as well. Drums (MIDI channel 10) pick their preset from the GM kit bank
+(bank 128).
 
-長い音符は**チャンク単位でストリーミング合成**されます。音符を開始した瞬間に必要なのは
-先頭 2 秒分だけで、残りは再生に合わせて少しずつ合成されるため、数秒〜数十秒の持続音でも
-メインスレッドが固まりません (60 秒の音符で 42ms → 1.2ms、メモリ 20MB → 0.7MB)。
-`OfflineAudioContext` (WAV/動画書き出し) では従来どおり一括合成します。
-`settings.sf2Streaming = false` で無効化できます。
-バックグラウンドのタブではタイマーが間引かれるため、非表示になった時点で
-再生中の音符の残りを全て合成し、以降の音符は一括合成に切り替えます (音が途切れません)。
+Long notes are **synthesised in chunks**: starting a note only needs the first
+two seconds, the rest is rendered as playback catches up, so even a note that
+lasts tens of seconds does not block the main thread (a 60 s note went from
+42 ms to 1.2 ms per update and from 20 MB to 0.7 MB of samples).
+`OfflineAudioContext` rendering (WAV/video export) still renders in one go.
+Set `settings.sf2Streaming = false` to disable chunked synthesis.
+Background tabs get their timers throttled, so when the document becomes hidden
+the remainder of every sounding note is rendered immediately and later notes
+fall back to one shot rendering (no dropouts).
 
+## Build variants
 
-## Build variants / ビルドバリエーション
-
-Four bundles are built from the same sources. They only differ in which sound
+Six bundles are built from the same sources. They only differ in which sound
 engines are compiled in: `src/features.js` is replaced per variant, so the
 excluded engines (and the embedded waveform table) are dropped from the bundle
 instead of merely being switched off at runtime.
@@ -355,6 +382,8 @@ wants the wavetable mode must supply its own: `picoAudio.loadWaves(buffer)`
 before the first note. Until then `soundQuality: 1` plays the basic engine.
 
 ## Credits
+
+Upstream: [cagpie/PicoAudio.js](https://github.com/cagpie/PicoAudio.js) (MIT License)
 
 FM tones: [sneakernets/DMXOPL](https://github.com/sneakernets/DMXOPL) (MIT License)
 
