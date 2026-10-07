@@ -180,7 +180,16 @@ export function renderSF2Note(option) {
     let stopped = false;
     let timer = null;
 
-    const scheduleChunk = () => {
+    // Per note nodes have to leave the graph when the note is over. Notes that
+    // end on their own are only removed from the player's stop list - their
+    // stop function is never called - so without this the mixer would keep two
+    // GainNodes per note forever (measured: 2269 live nodes after 1134 notes).
+    const releaseGraph = () => {
+        try { performanceGain.disconnect(); } catch (e) { /* noop */ }
+        try { stopGainNode.disconnect(); } catch (e) { /* noop */ }
+    };
+
+    function scheduleChunk() {
         if (stopped) return false;
         const first = renderer.frames;
         const written = renderer.render(chunkFrames, scratch);
@@ -200,8 +209,16 @@ export function renderSF2Note(option) {
         const source = context.createBufferSource();
         source.buffer = buffer;
         source.connect(performanceGain);
+        // The chunk that finishes the note also tears the note's graph down:
+        // notes that end on their own never get their stop function called, so
+        // without this two GainNodes per note would stay in the mixer forever.
+        const isLastChunk = renderer.isDone();
         source.onended = () => {
             try { source.disconnect(); source.buffer = null; } catch (e) { /* noop */ }
+            if (isLastChunk && !stopped) {
+                releaseGraph();
+                activeStreamers.delete(streamer);
+            }
         };
         try {
             source.start(start + scheduledFrames / sampleRate);
@@ -216,7 +233,7 @@ export function renderSF2Note(option) {
         sources.push(source);
         scheduledFrames += written;
         return true;
-    };
+    }
 
     const pump = () => {
         timer = null;
