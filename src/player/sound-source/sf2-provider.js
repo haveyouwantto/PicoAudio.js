@@ -14,13 +14,9 @@
 
 import { loadTSFFont } from '../sf2/tsf.js';
 import { noteOnVoices } from '../sf2/tsf-synth.js';
-import { tsfCents2Hertz, tsfDecibelsToGain } from '../sf2/tsf-font.js';
 
 /** Parsed font for the current session (set by loadSF2) */
 let sf2Font = null;
-
-/** Lightweight description for diagnostics/UI */
-let sf2Info = null;
 
 /**
  * Load and parse an SF2 SoundFont file.
@@ -33,19 +29,12 @@ export function loadSF2(ctx, arrayBuffer) {
         const sampleRate = (ctx && ctx.sampleRate) ? ctx.sampleRate : 44100;
         const font = loadTSFFont(arrayBuffer, sampleRate, 0);
         sf2Font = font;
-        sf2Info = {
-            presets: font.presets.length,
-            regions: font.regionCount,
-            samples: font.samples.length,
-            sampleRate,
-        };
-        console.log(`SF2 loaded (TinySoundFont port): ${sf2Info.presets} presets, `
-            + `${sf2Info.regions} regions, ${sf2Info.samples} sample frames @ ${sampleRate}Hz`);
+        console.log(`SF2 loaded (TinySoundFont port): ${font.presets.length} presets, `
+            + `${font.regionCount} regions, ${font.samples.length} sample frames @ ${sampleRate}Hz`);
         return true;
     } catch (e) {
         console.error('Failed to parse SF2:', e);
         sf2Font = null;
-        sf2Info = null;
         return false;
     }
 }
@@ -58,11 +47,6 @@ export function getSF2Font() {
 /** Check whether an SF2 file is currently loaded */
 export function isSF2Loaded() {
     return sf2Font !== null;
-}
-
-/** Parsed font statistics (diagnostics) */
-export function getSF2Data() {
-    return sf2Info;
 }
 
 /**
@@ -117,6 +101,7 @@ export function getSF2Regions(program, pitch, velocity = 100, isDrum = false, ba
     const voices = noteOnVoices(sf2Font, presetIndex, pitch, vel);
     return voices.map((v) => ({
         ...v.region,
+        sampleName: sf2Font.getSampleName(v.region.sampleId),
         presetIndex,
         presetName: sf2Font.getPresetName(presetIndex),
         // Envelope parameters as the voice sees them, i.e. with the key
@@ -126,61 +111,10 @@ export function getSF2Regions(program, pitch, velocity = 100, isDrum = false, ba
     }));
 }
 
-/** Name of the preset a MIDI program resolves to (diagnostics). */
-export function getSF2PresetName(program, isDrum = false, bank = 0) {
-    const index = getSF2PresetIndex(program, isDrum, bank);
-    return index < 0 ? null : sf2Font.getPresetName(index);
-}
-
-/**
- * Diagnostic view of the regions a note triggers.
- *
- * The engine no longer resolves "layers" with its own gain/envelope maths, so
- * this only renames TSF region fields into the shape the analysis scripts in
- * the JMBox repository were written against. Nothing in the playback path
- * uses it.
- */
-export function getSF2Layers(program, pitch, velocity = 100, isDrum = false, bank = 0) {
-    if (!sf2Font) return [];
-    return getSF2Regions(program, pitch, velocity, isDrum, bank).map((r) => ({
-        buffer: null,
-        sampleId: r.sampleId,
-        sampleName: sf2Font.getSampleName(r.sampleId),
-        instrumentName: r.presetName,
-        rootKey: r.pitchKeycenter,
-        correction: 0,
-        coarseTune: r.transpose,
-        fineTune: r.tune,
-        scaleTuning: r.pitchKeytrack,
-        originalSampleRate: r.sampleRate,
-        startLoop: r.loopStart,
-        endLoop: r.loopEnd,
-        loopMode: r.loopMode,
-        headerStart: 0,
-        sampleStart: r.offset,
-        sampleEnd: r.end,
-        gain: tsfDecibelsToGain(-r.attenuation * 10),
-        pan: r.pan * 1000,
-        pan1000: r.pan * 1000,
-        envelope: r.resolvedAmpEnv,
-        modEnv: r.resolvedModEnv,
-        filterFc: r.initialFilterFc <= 13500 ? tsfCents2Hertz(r.initialFilterFc) : 20000,
-        filterQ: r.initialFilterQ,
-        keyRange: [r.lokey, r.hikey],
-        velRange: [r.lovel, r.hivel],
-        exclusiveClass: r.group,
-        presetIndex: r.presetIndex,
-        presetName: r.presetName,
-    }));
-}
-
 export default {
     loadSF2,
     isSF2Loaded,
     getSF2Font,
-    getSF2Data,
     getSF2PresetIndex,
     getSF2Regions,
-    getSF2PresetName,
-    getSF2Layers,
 };
