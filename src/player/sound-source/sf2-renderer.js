@@ -15,6 +15,7 @@
  */
 
 import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
+import { resolveInterpolation } from "../sf2/tsf-synth.js";
 
 /** Hard cap on the release tail that is rendered past the note-off. */
 const SF2_MAX_TAIL_SECONDS = 30;
@@ -65,6 +66,9 @@ export function renderSF2Note(option) {
     if (presetIndex < 0) return null;
 
     const sampleRate = context.sampleRate || 44100;
+    // Sample interpolation: 'linear' (default, matches TinySoundFont),
+    // 'nearest' (lightest) or 'cubic' (smoothest).
+    const interpolation = resolveInterpolation(this.settings && this.settings.sf2Interpolation);
     const noteFrames = Math.max(1, Math.round((stop - start) * sampleRate));
     const maxFrames = noteFrames + Math.round(SF2_MAX_TAIL_SECONDS * sampleRate);
 
@@ -89,7 +93,7 @@ export function renderSF2Note(option) {
     // tsf_note_on at frame 0, tsf_note_off at noteFrames, render until the
     // voices die or the tail cap is reached.
     const rendered = font.renderNote(
-        presetIndex, option.pitch, velocity / 127, noteFrames, maxFrames, pitchBends, panChanges);
+        presetIndex, option.pitch, velocity / 127, noteFrames, maxFrames, pitchBends, panChanges, interpolation);
     if (!rendered.frames) return null;
 
     const buffer = context.createBuffer(2, rendered.frames, sampleRate);

@@ -24,6 +24,31 @@ import {
 export const TSF_RENDER_EFFECTSAMPLEBLOCK = 64;
 const TSF_FASTRELEASETIME = 0.01;
 
+/**
+ * Sample interpolation modes.
+ *
+ * TSF itself only has the linear one (tsf.h: "Simple linear interpolation"),
+ * so LINEAR is the reference behaviour and the default. The other two are
+ * opt-in trade-offs for the app:
+ *   - NEAREST: one sample fetch, no multiply/add, audibly grainier (aliasing
+ *     and a slight high frequency loss when pitching up).
+ *   - CUBIC: 4 point Catmull-Rom, smoother than linear at the cost of a few
+ *     more multiplies per sample.
+ */
+export const TSF_INTERP_NEAREST = 0;
+export const TSF_INTERP_LINEAR = 1;
+export const TSF_INTERP_CUBIC = 2;
+
+/** Map a settings string ('nearest' | 'linear' | 'cubic') to a mode constant. */
+export function resolveInterpolation(mode) {
+    if (typeof mode === 'number') return mode;
+    switch (String(mode == null ? '' : mode).toLowerCase()) {
+    case 'nearest': case 'neighbor': case 'neighbour': case 'point': case 'off': return TSF_INTERP_NEAREST;
+    case 'cubic': case 'hermite': case 'catmull-rom': case 'catmullrom': case 'high': return TSF_INTERP_CUBIC;
+    default: return TSF_INTERP_LINEAR;
+    }
+}
+
 const TSF_SEGMENT_NONE = 0;
 const TSF_SEGMENT_DELAY = 1;
 const TSF_SEGMENT_ATTACK = 2;
@@ -304,7 +329,7 @@ export function noteOffVoices(font, voices, presetIndex, key) {
 }
 
 /** tsf_voice_render, interleaved stereo only: adds into `out` at frame `offset`. */
-function voiceRender(font, v, out, offset, numSamples) {
+function voiceRender(font, v, out, offset, numSamples, interp) {
     const region = v.region;
     const input = font.samples;
     let outIdx = offset * 2;
@@ -382,24 +407,80 @@ function voiceRender(font, v, out, offset, numSamples) {
         const gainLeft = f32(gainMono * v.panFactorLeft);
         const gainRight = f32(gainMono * v.panFactorRight);
 
-        while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
-            const pos = Math.trunc(tmpSourceSamplePosition);
-            const nextPos = (pos >= tmpLoopEnd && isLooping ? tmpLoopStart : pos + 1);
+        // The sample loop is duplicated per interpolation mode so the hot path
+        // stays branch free; only one of the three ever runs.
+        if (interp === TSF_INTERP_NEAREST) {
+            while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
+                let val = input[Math.trunc(tmpSourceSamplePosition)];
 
-            // Simple linear interpolation.
-            const alpha = f32(tmpSourceSamplePosition - pos);
-            let val = f32(input[pos] * (1.0 - alpha) + input[nextPos] * alpha);
+                if (tmpLowpass.active) val = lowpassProcess(tmpLowpass, val);
 
-            // Low-pass filter.
-            if (tmpLowpass.active) val = lowpassProcess(tmpLowpass, val);
+                out[outIdx++] += val * gainLeft;
+                out[outIdx++] += val * gainRight;
 
-            out[outIdx++] += val * gainLeft;
-            out[outIdx++] += val * gainRight;
+                tmpSourceSamplePosition += pitchRatio;
+                if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
+                    tmpSourceSamplePosition -= (tmpLoopEnd - tmpLoopStart + 1.0);
+                }
+            }
+        } else if (interp === TSF_INTERP_CUBIC) {
+            const loopLen = tmpLoopEnd - tmpLoopStart + 1.0;
+            const lastSample = tmpSampleEndDbl - 1;
+            while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
+                const pos = Math.trunc(tmpSourceSamplePosition);
+                // Neighbours, wrapped into the loop when the font loops.
+                const i1 = pos;
+                let i2 = (isLooping && pos + 1 > tmpLoopEnd ? pos + 1 - loopLen : pos + 1);
+                let i0 = pos - 1;
+                let i3 = pos + 2;
+                if (isLooping) {
+                    if (pos === tmpLoopStart) i0 = tmpLoopEnd;
+                    if (i3 > tmpLoopEnd) i3 -= loopLen;
+                }
+                if (i0 < 0) i0 = 0;
+                if (i2 > lastSample) i2 = lastSample;
+                if (i3 > lastSample) i3 = lastSample;
 
-            // Next sample.
-            tmpSourceSamplePosition += pitchRatio;
-            if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
-                tmpSourceSamplePosition -= (tmpLoopEnd - tmpLoopStart + 1.0);
+                // Catmull-Rom.
+                const alpha = f32(tmpSourceSamplePosition - pos);
+                const y0 = input[i0], y1 = input[i1], y2 = input[i2], y3 = input[i3];
+                let val = 0.5 * ((2 * y1)
+                    + (-y0 + y2) * alpha
+                    + (2 * y0 - 5 * y1 + 4 * y2 - y3) * alpha * alpha
+                    + (-y0 + 3 * y1 - 3 * y2 + y3) * alpha * alpha * alpha);
+
+                // Low-pass filter.
+                if (tmpLowpass.active) val = lowpassProcess(tmpLowpass, val);
+                val = f32(val);
+
+                out[outIdx++] += val * gainLeft;
+                out[outIdx++] += val * gainRight;
+
+                tmpSourceSamplePosition += pitchRatio;
+                if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
+                    tmpSourceSamplePosition -= loopLen;
+                }
+            }
+        } else {
+            while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
+                const pos = Math.trunc(tmpSourceSamplePosition);
+                const nextPos = (pos >= tmpLoopEnd && isLooping ? tmpLoopStart : pos + 1);
+
+                // Simple linear interpolation (identical to tsf.h).
+                const alpha = f32(tmpSourceSamplePosition - pos);
+                let val = f32(input[pos] * (1.0 - alpha) + input[nextPos] * alpha);
+
+                // Low-pass filter.
+                if (tmpLowpass.active) val = lowpassProcess(tmpLowpass, val);
+
+                out[outIdx++] += val * gainLeft;
+                out[outIdx++] += val * gainRight;
+
+                // Next sample.
+                tmpSourceSamplePosition += pitchRatio;
+                if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
+                    tmpSourceSamplePosition -= (tmpLoopEnd - tmpLoopStart + 1.0);
+                }
             }
         }
 
@@ -425,7 +506,8 @@ function voiceRender(font, v, out, offset, numSamples) {
  *
  * @returns {{data: Float32Array, frames: number}} interleaved LR samples
  */
-export function renderNote(font, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges) {
+export function renderNote(font, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges, interpolation) {
+    const interp = resolveInterpolation(interpolation);
     const voices = noteOnVoices(font, presetIndex, key, vel);
     let out = new Float32Array(8192 * 2);
     let written = 0;
@@ -466,7 +548,7 @@ export function renderNote(font, presetIndex, key, vel, noteOffFrames, maxFrames
             out = grown;
         }
         for (const v of voices) {
-            if (v.playingPreset !== -1) voiceRender(font, v, out, written, block);
+            if (v.playingPreset !== -1) voiceRender(font, v, out, written, block, interp);
         }
         written += block;
     }
@@ -474,4 +556,12 @@ export function renderNote(font, presetIndex, key, vel, noteOffFrames, maxFrames
     return { data: out.subarray(0, written * 2), frames: written };
 }
 
-export default { renderNote, noteOnVoices, noteOffVoices };
+export default {
+    renderNote,
+    noteOnVoices,
+    noteOffVoices,
+    resolveInterpolation,
+    TSF_INTERP_NEAREST,
+    TSF_INTERP_LINEAR,
+    TSF_INTERP_CUBIC,
+};

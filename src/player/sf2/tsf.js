@@ -119,9 +119,10 @@ export class TSFFont {
      * @param {number} maxFrames hard cap, the render stops earlier when all voices are done
      * @param {Array<{frame:number,value:number}>} [pitchBends] semitone steps
      * @param {Array<{frame:number,value:number}>} [panChanges] channel pan 0..1
+     * @param {string|number} [interpolation] 'linear' (default, TSF) | 'nearest' | 'cubic'
      */
-    renderNote(presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges) {
-        return renderNote(this, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges);
+    renderNote(presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges, interpolation) {
+        return renderNote(this, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges, interpolation);
     }
 }
 

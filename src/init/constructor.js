@@ -38,6 +38,7 @@ export default function picoAudioConstructor(argsObj) {
         isSameDrumSoundOverlap: false, // 同じドラムの音が重なることを許容するか
         baseLatency: -1, // レイテンシの設定 -1:auto
         soundQuality: 1, // Set the sound quality level: 0 for basic waveform, 1 for FM waveform
+        sf2Interpolation: 'linear', // SF2 sample interpolation: 'linear' (TSF reference) | 'nearest' | 'cubic'
         preserveSmfData: false, // Preserve the SMF (Standard MIDI File) data during processing,
         globalReverb: false,
         instrumentAttenuation: 1,

@@ -230,6 +230,12 @@ class PicoAudio {
     setWebMIDI(enable) { this.settings.isWebMIDI = enable; }
     isCC111() { return this.settings.isCC111; }
     setCC111(enable) { this.settings.isCC111 = enable; }
+
+    // SF2 sample interpolation: 'linear' (matches TinySoundFont, default),
+    // 'nearest' (cheapest) or 'cubic' (smoothest).
+    getSF2Interpolation() { return this.settings.sf2Interpolation; }
+    setSF2Interpolation(mode) { this.settings.sf2Interpolation = mode; }
+
     isReverb() { return this.settings.isReverb; }
     setReverb(enable) { this.settings.isReverb = enable; }
     getReverbVolume() { return this.settings.reverbVolume; }
