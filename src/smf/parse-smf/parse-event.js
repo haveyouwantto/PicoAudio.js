@@ -30,6 +30,7 @@ export default function parseEvent(info) {
         let pan = 64;
         let expression = 127;
         let velocity = 100;
+        let volumeSet = false; // CC7 seen (TSF/SF2 use "no attenuation until the file says so")
         let modulation = 0;
         let hold = 0;
         let reverb = this.settings.initReverb;
@@ -72,6 +73,12 @@ export default function parseEvent(info) {
                             pan: [{timing:tick,time:time,value:pan}],
                             expression: [{timing:tick,time:time,value:expression*(masterVolume/127)}],
                             velocity: (smf[p+2]/127)*(velocity/127),
+                            // Raw MIDI values, kept next to the derived ones above:
+                            // the SF2 engine follows TinySoundFont, which applies its own
+                            // velocity->gain and channel volume/expression curves.
+                            midiVelocity: smf[p+2],
+                            midiVolume: volumeSet ? velocity : 127,
+                            midiExpression: expression,
                             modulation: [{timing:tick,time:time,value:modulation}],
                             holdBeforeStop: null,
                             reverb: [{timing:tick,time:time,value:reverb}],
@@ -179,6 +186,7 @@ export default function parseEvent(info) {
                             break;
                         case 7: 
                             velocity = smf[p+2];
+                            volumeSet = true;
                             break;
                         case 10: // Pan
                             pan = smf[p+2];
