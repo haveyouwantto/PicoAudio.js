@@ -213,14 +213,31 @@ export function renderSF2NoteWebAudio(option) {
         }))
         : null;
 
-    const nodes = [];
+    const nodes = [];          // every node of this note, for the stop function
     let startedAny = false;
     let maxEnd = start;
+    let activeVoices = 0;
+    let noteReleased = false;
+
+    // The note's own gain nodes have to leave the graph when the audio is over:
+    // notes that end on their own are only dropped from the player's stop list,
+    // their stop function is never called (this is the same leak the DSP
+    // renderer had).
+    const releaseNoteGraph = () => {
+        if (noteReleased) return;
+        noteReleased = true;
+        try { performanceGain.disconnect(); } catch (e) { /* noop */ }
+        try { stopGainNode.disconnect(); } catch (e) { /* noop */ }
+    };
 
     for (const voice of voices) {
         const region = voice.region;
         const shdr = font.shdrs[region.sampleId];
         if (!shdr || !(shdr.sampleRate > 0)) continue;
+
+        // nodes belonging to this voice only, so one voice finishing does not
+        // tear down the others (velocity layers, drum voices)
+        const voiceNodes = [];
 
         const buffer = getSampleBuffer(context, font, region.sampleId);
         const source = context.createBufferSource();
@@ -255,7 +272,7 @@ export function renderSF2NoteWebAudio(option) {
                 // default Q), which is exactly what Web Audio's lowpass does
                 // when its Q (in dB) equals the generator's decibels.
                 filter.Q.value = region.initialFilterQ / 10;
-                nodes.push(filter);
+                voiceNodes.push(filter);
             }
         }
 
@@ -263,7 +280,7 @@ export function renderSF2NoteWebAudio(option) {
         const level = context.createGain();
         const peak = Math.max(0, tsfDecibelsToGain(voice.noteGainDB));
         scheduleAmpEnvelope(level.gain, voice.ampenv.parameters, start, stop, peak);
-        nodes.push(level);
+        voiceNodes.push(level);
 
         // pan: tsf's sqrt(0.5 -/+ pan) factors, per channel
         const panL = context.createGain();
@@ -271,7 +288,7 @@ export function renderSF2NoteWebAudio(option) {
         const panR = context.createGain();
         panR.gain.value = voice.panFactorRight;
         const merger = context.createChannelMerger(2);
-        nodes.push(panL, panR, merger);
+        voiceNodes.push(panL, panR, merger);
 
         // channel pan (CC10) moves both factors like tsf_channel_set_pan
         if (option.pan && option.pan.length) {
@@ -331,7 +348,7 @@ export function renderSF2NoteWebAudio(option) {
             const lfoStart = start + Math.max(0, delay);
             osc.start(Math.max(lfoStart, context.currentTime));
             osc.stop(stop + 0.05);
-            nodes.push(osc, gain);
+            voiceNodes.push(osc, gain);
         };
         const modFilterHz = (filter && region.modLfoToFilterFc)
             ? filter.frequency.value * (Math.pow(2, Math.abs(region.modLfoToFilterFc) / 1200) - 1) : 0;
@@ -367,10 +384,14 @@ export function renderSF2NoteWebAudio(option) {
         // release the graph when the note is over (the player never calls the
         // stop function for notes that end on their own)
         source.onended = () => {
-            for (const node of nodes) { try { node.disconnect(); } catch (e) { /* noop */ } }
+            for (const node of voiceNodes) { try { node.disconnect(); } catch (e) { /* noop */ } }
+            voiceNodes.length = 0;
             try { source.disconnect(); } catch (e) { /* noop */ }
+            activeVoices--;
+            if (activeVoices === 0) releaseNoteGraph();
         };
-        nodes.push(source);
+        activeVoices++;
+        nodes.push(...voiceNodes, source);
         maxEnd = Math.max(maxEnd, stopSource);
         startedAny = true;
     }
@@ -386,8 +407,8 @@ export function renderSF2NoteWebAudio(option) {
             try { if (typeof node.stop === 'function') node.stop(); } catch (e) { /* noop */ }
             try { node.disconnect(); } catch (e) { /* noop */ }
         }
-        try { performanceGain.disconnect(); } catch (e) { /* noop */ }
-        try { stopGainNode.disconnect(); } catch (e) { /* noop */ }
+        nodes.length = 0;
+        releaseNoteGraph();
     };
 }
 
