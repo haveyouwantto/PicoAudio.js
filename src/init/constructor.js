@@ -40,6 +40,7 @@ export default function picoAudioConstructor(argsObj) {
         soundQuality: 1, // Set the sound quality level: 0 for basic waveform, 1 for FM waveform
         sf2Interpolation: 'linear', // SF2 sample interpolation: 'linear' (TSF reference) | 'nearest' | 'cubic'
         sf2Streaming: true, // SF2: synthesize long notes in chunks while they play (false = render the whole note up front)
+        sf2Engine: 'dsp', // SF2 synthesis: 'dsp' (TinySoundFont port, exact) | 'webaudio' (native nodes, much cheaper)
         preserveSmfData: false, // Preserve the SMF (Standard MIDI File) data during processing,
         globalReverb: false,
         instrumentAttenuation: 1,

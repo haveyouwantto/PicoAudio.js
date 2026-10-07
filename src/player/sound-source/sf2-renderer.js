@@ -21,6 +21,7 @@
 
 import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
 import { createNoteRenderer, resolveInterpolation } from "../sf2/tsf-synth.js";
+import { renderSF2NoteWebAudio } from "./sf2-webaudio-renderer.js";
 
 /** Hard cap on the release tail that is rendered past the note-off. */
 const SF2_MAX_TAIL_SECONDS = 30;
@@ -74,6 +75,12 @@ export function renderSF2Note(option) {
     const context = this.context;
     const font = getSF2Font();
     if (!font) return null;
+
+    // 'webaudio' hands the synthesis to native nodes instead of the JavaScript
+    // sample loop (same region/envelope/gain data, see sf2-webaudio-renderer.js).
+    if (this.settings && this.settings.sf2Engine === 'webaudio') {
+        return renderSF2NoteWebAudio.call(this, option);
+    }
 
     const songStartTime = this.states && this.states.startTime ? this.states.startTime : 0;
     const baseLatency = this.baseLatency || 0;
