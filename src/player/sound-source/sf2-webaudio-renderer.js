@@ -243,7 +243,14 @@ export function renderSF2NoteWebAudio(option) {
         const source = context.createBufferSource();
         source.buffer = buffer;
 
-        const rate = tsfTimecents2Secs(voice.pitchInputTimecents) * voice.pitchOutputFactor;
+        // tsf's ratio already contains sampleRate / outSampleRate because it
+        // reads the sample data at the output rate. Web Audio's playbackRate is
+        // relative to the *buffer's* own sample rate (it resamples buffer ->
+        // context itself), so the sample rate factor has to come back out -
+        // otherwise every sample that is not recorded at the context rate plays
+        // an octave (or more) off.
+        const rate = tsfTimecents2Secs(voice.pitchInputTimecents) * voice.pitchOutputFactor
+            * (sampleRate / shdr.sampleRate);
         source.playbackRate.value = rate;
         if (pitchBends) {
             pitchBends.forEach((p) => {
