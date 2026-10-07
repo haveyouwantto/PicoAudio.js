@@ -190,9 +190,10 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
     }
 
     // リバーブの変動を設定 //
+    let convolverGainNode = null;
     if (this.settings.isReverb && option.reverb && (option.reverb.length >= 2 || option.reverb[0].value > 0)) {
         const convolver = this.convolver;
-        const convolverGainNode = context.createGain();
+        convolverGainNode = context.createGain();
         let firstNode = true;
         option.reverb ? option.reverb.forEach((p) => {
             if (firstNode) {
@@ -211,9 +212,10 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
     }
 
     // コーラスの変動を設定 //
+    let chorusGainNode = null;
     if (this.settings.isChorus && option.chorus && (option.chorus.length >= 2 || option.chorus[0].value > 0)) {
         const chorusDelayNode = this.chorusDelayNode;
-        const chorusGainNode = context.createGain();
+        chorusGainNode = context.createGain();
         let firstNode = true;
         option.chorus ? option.chorus.forEach((p) => {
             if (firstNode) {
@@ -243,6 +245,36 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
         this.stopAudioNode(oscillator, stop, stopGainNode);
     }
 
+    // このノートが持つノードを全部覚えておき、音が終わったらグラフから外す。
+    // プレイヤーは自然終了したノートを停止リストから消すだけで stop 関数を
+    // 呼ばないため、これが無いと 1 ノートあたり数個のノードが masterGainNode
+    // に繋がったまま残り続ける (数分の演奏で数千ノード)。
+    const ownedNodes = [expGainNode, oscillator, panNode, gainNode, stopGainNode];
+    if (biquadFilter) ownedNodes.push(biquadFilter);
+    if (modulationOscillator) ownedNodes.push(modulationOscillator);
+    if (modulationGainNode) ownedNodes.push(modulationGainNode);
+    if (convolverGainNode) ownedNodes.push(convolverGainNode);
+    if (chorusGainNode) ownedNodes.push(chorusGainNode);
+
+    const cleanup = {
+        nodes: ownedNodes,
+        /** 他のノード (create-note 側で作ったもの) も掃除対象に加える */
+        add(...nodes) {
+            for (const node of nodes) {
+                if (node && cleanup.nodes.indexOf(node) < 0) cleanup.nodes.push(node);
+            }
+            return cleanup;
+        },
+        disconnect() {
+            for (const node of cleanup.nodes) {
+                try { node.disconnect(); } catch (e) { /* noop */ }
+            }
+            cleanup.nodes.length = 0;
+        },
+    };
+    // ソースが止まった時 = ノートの音が終わった時 (自然終了・明示停止の両方)。
+    oscillator.onended = () => cleanup.disconnect();
+
     // AudioNodeやパラメータを返す //
     return {
         start: start,
@@ -255,6 +287,7 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
         gainNode: gainNode,
         stopGainNode: stopGainNode,
         filter: biquadFilter,
+        cleanup: cleanup,
         isGainValueZero: false
     };
 }

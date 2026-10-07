@@ -133,6 +133,7 @@ export default function createNote(option) {
                 modOsc.connect(modGain);
                 modGain.connect(scaleNode);
                 scaleNode.connect(oscillator.detune);
+                if (note.cleanup) note.cleanup.add(modOsc, modGain, scaleNode);
                 modOsc.start(note.start);
                 this.stopAudioNode(modOsc, note.stop, modGain);
             }
@@ -292,6 +293,7 @@ export default function createNote(option) {
 
                     vibOsc.start(note.start);
                     this.stopAudioNode(vibOsc, note.stop, vibGain);
+                    if (note.cleanup) note.cleanup.add(vibOsc, vibGain);
                 }
             } catch (e) {
                 console.error(e); // Log any errors
