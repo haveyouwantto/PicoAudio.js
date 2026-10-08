@@ -39,9 +39,9 @@
  */
 
 import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
-import { noteOnVoices } from "../sf2/tsf-synth.js";
+import { noteOnVoices, tsfQuality } from "../sf2/tsf-synth.js";
 import { tsfCents2Hertz, tsfDecibelsToGain } from "../sf2/tsf-font.js";
-import { resolveSF2Quality } from "../sf2/sf2-quality.js";
+import { resolveSF2Quality, applySF2Quality } from "../sf2/sf2-quality.js";
 
 /** App level trim, same value as the DSP renderer. */
 const SF2_OUTPUT_TRIM_DB = -12;
@@ -283,6 +283,9 @@ export function renderSF2NoteWebAudio(option) {
     if (!font) return null;
     // Sound quality: leave out the optional stages this preset turns off.
     const quality = resolveSF2Quality(this.settings);
+    // noteOnVoices() comes from the shared synth instance, which the DSP engine
+    // also writes to, so make sure the voices are set up for *this* preset.
+    applySF2Quality(tsfQuality, this.settings);
 
     const songStartTime = this.states && this.states.startTime ? this.states.startTime : 0;
     const baseLatency = this.baseLatency || 0;

@@ -63,7 +63,15 @@ export function isSF2Loaded() {
  */
 export function getSF2PresetIndex(program, isDrum = false, bank = 0, key = -1, velocity = -1) {
     if (!sf2Font) return -1;
-    if (!isDrum) return sf2Font.getPresetIndex(0, program);
+    if (!isDrum) {
+        // tsf_channel_set_presetnumber: the channel's bank first, bank 0 as the
+        // fallback. Using bank 0 only made every variation bank (GS/XG fonts
+        // carry 20+ of them, GeneralUser GS for example) play the wrong
+        // instrument - a bank-select MIDI came out as a completely different
+        // sound, or as no sound at all when the font has no bank 0 preset.
+        const index = sf2Font.getPresetIndex(bank, program);
+        return index >= 0 ? index : sf2Font.getPresetIndex(0, program);
+    }
 
     const candidates = [];
     if (bank >= 120) candidates.push([bank, program]);
