@@ -4,6 +4,7 @@ import { generatePinkNoise } from '../player/audio/sound-gen.js';
 import AudioUtil from '../util/audio-util.js';
 import Waveform from '../player/audio/dsp.js';
 import { flushSF2Streaming } from '../player/sound-source/sf2-renderer.js';
+import { prepareSF2Worklet } from '../player/sound-source/sf2-worklet-renderer.js';
 import { HAS_SF2 } from '../features.js';
 
 export default function init(argsObj) {
@@ -159,4 +160,8 @@ export default function init(argsObj) {
     if (this.settings.baseLatency != -1) {
         this.baseLatency = this.settings.baseLatency;
     }
+
+    // The AudioWorklet engine loads its module asynchronously; start that now so
+    // playback does not have to fall back for the first notes.
+    if (HAS_SF2 && this.settings.sf2Engine === 'worklet') prepareSF2Worklet(this);
 }

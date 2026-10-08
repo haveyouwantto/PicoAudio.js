@@ -22,6 +22,7 @@
 import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
 import { createNoteRenderer, resolveInterpolation } from "../sf2/tsf-synth.js";
 import { renderSF2NoteWebAudio } from "./sf2-webaudio-renderer.js";
+import { renderSF2NoteWorklet } from "./sf2-worklet-renderer.js";
 
 /** Hard cap on the release tail that is rendered past the note-off. */
 const SF2_MAX_TAIL_SECONDS = 30;
@@ -99,6 +100,15 @@ export function renderSF2Note(option) {
     // sample loop (same region/envelope/gain data, see sf2-webaudio-renderer.js).
     if (this.settings && this.settings.sf2Engine === 'webaudio') {
         return renderSF2NoteWebAudio.call(this, option);
+    }
+
+    // 'worklet' runs this very implementation inside an AudioWorklet (one node
+    // for the whole song, no per-voice graph). While the module is still
+    // loading - and for offline rendering, which is not realtime constrained -
+    // it returns null and the note is rendered here instead.
+    if (this.settings && this.settings.sf2Engine === 'worklet') {
+        const stopWorklet = renderSF2NoteWorklet.call(this, option);
+        if (stopWorklet) return stopWorklet;
     }
 
     const songStartTime = this.states && this.states.startTime ? this.states.startTime : 0;

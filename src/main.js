@@ -22,6 +22,7 @@ import parseSMF from './smf/parse-smf.js';
 import startWebMIDI from './web-midi/start-web-midi.js';
 import { loadWaves } from './player/sound-source/periodic-wave-man.js';
 import { loadSF2, isSF2Loaded } from './player/sound-source/sf2-provider.js';
+import { prepareSF2Worklet, pushSF2WorkletFont, isSF2WorkletReady } from './player/sound-source/sf2-worklet-renderer.js';
 import { HAS_SF2, HAS_WAVE } from './features.js';
 
 class PicoAudio {
@@ -271,7 +272,31 @@ class PicoAudio {
             console.error('SF2: AudioContext not initialized');
             return false;
         }
-        return loadSF2(this.context, buffer);
+        const loaded = loadSF2(this.context, buffer);
+        // the worklet keeps its own copy of the font; send it while the font is
+        // being loaded instead of during the first note
+        if (loaded && HAS_SF2 && this.settings.sf2Engine === 'worklet') {
+            prepareSF2Worklet(this);
+            pushSF2WorkletFont(this);
+        }
+        return loaded;
+    }
+
+    /**
+     * Start loading the SF2 AudioWorklet module ahead of the first note.
+     * Call it when settings.sf2Engine is switched to 'worklet'; playback works
+     * without it, the notes until the module is loaded are rendered by the DSP
+     * engine instead.
+     */
+    prepareSF2Worklet() {
+        if (!HAS_SF2) return false;
+        prepareSF2Worklet(this);
+        return true;
+    }
+
+    /** True once settings.sf2Engine = 'worklet' can take notes. */
+    isSF2WorkletReady() {
+        return HAS_SF2 ? isSF2WorkletReady(this.context) : false;
     }
 
     isSF2Loaded() {
