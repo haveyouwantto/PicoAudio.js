@@ -98,18 +98,6 @@ export default class UpdateNote {
             if (states.updateBufMaxTime > 1100) states.updateBufMaxTime = 1100;
         }
 
-        // Web Audio playback pays for the lookahead in audio thread time: a
-        // node graph that is merely scheduled costs the same as one that is
-        // playing (measured: the same song at 100 / 400 / 800 ms of lookahead
-        // uses 0.56 / 0.59 / 0.68 of a core), and nothing has to be pre-rendered
-        // for that engine - note-on costs ~1 ms. Cap the adaptive growth so a
-        // busy main thread cannot spiral into a much bigger live graph.
-        if (settings.sf2Engine == 'webaudio' && settings.soundQuality != 0) {
-            const lookaheadCap = 150;
-            if (states.updateBufTime > lookaheadCap) states.updateBufTime = lookaheadCap;
-            if (states.updateBufMaxTime > lookaheadCap) states.updateBufMaxTime = lookaheadCap;
-        }
-
         // サウンドが重すぎる場合、先読み度合いを小さくして負荷軽減 //
         if (states.latencyLimitTime > 150) {
             cTimeSum = pTimeSum;
@@ -149,24 +137,34 @@ export default class UpdateNote {
 
                     // レトロモード（和音制限モード） //
                     if (settings.maxPoly != -1 || settings.maxPercPoly != -1) {
-                        let polyCnt = 0;
-                        let percCnt = 0;
-                        states.stopFuncs.forEach((tar) => {
-                            if (!tar.note) return;
-                            if (tar.note.channel != 9) {
-                                if (note.start >= tar.note.start && note.start < tar.note.stop) {
-                                    polyCnt++;
-                                }
-                            } else {
-                                if (note.start == tar.note.start) {
-                                    percCnt++;
+                        // 上限に達したら新しい音を捨てるのではなく、いちばん古い
+                        // 発音中の音を止めて枠を空ける (ボイススチール) //
+                        const isPerc = note.channel == 9;
+                        const limit = isPerc ? settings.maxPercPoly : settings.maxPoly;
+                        if (limit != -1) {
+                            const sounding = states.stopFuncs.filter((tar) => tar.note
+                                && (tar.note.channel == 9) == isPerc
+                                && (isPerc
+                                    ? note.start == tar.note.start
+                                    : (note.start >= tar.note.start && note.start < tar.note.stop)));
+                            if (sounding.length >= limit) {
+                                // 古い順（tick ではなく秒で比較: 途中のテンポ変更でも正しい）
+                                sounding.sort((a, b) => a.note.startTime - b.note.startTime);
+                                while (sounding.length >= limit && sounding.length > 0) {
+                                    const victim = sounding.shift();
+                                    try {
+                                        victim.stopFunc();
+                                    } catch (e) {
+                                        if (picoAudio.debug) console.warn(e);
+                                    }
+                                    picoAudio.clearFunc('note', victim.note);
                                 }
                             }
-                        });
-                        if ((note.channel != 9 && polyCnt >= settings.maxPoly)
-                            || (note.channel == 9 && percCnt >= settings.maxPercPoly)) {
-                            noteDropped(picoAudio, 'polyphony limit (maxPoly/maxPercPoly)', note);
-                            continue;
+                            if (sounding.length >= limit) {
+                                // 制限が 0 など、空けられる枠が無い場合
+                                noteDropped(picoAudio, 'polyphony limit (maxPoly/maxPercPoly)', note);
+                                continue;
+                            }
                         }
                     }
 
