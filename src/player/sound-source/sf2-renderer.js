@@ -20,7 +20,8 @@
  */
 
 import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
-import { createNoteRenderer, resolveInterpolation } from "../sf2/tsf-synth.js";
+import { createNoteRenderer, resolveInterpolation, tsfQuality } from "../sf2/tsf-synth.js";
+import { applySF2Quality, resolveSF2Interpolation } from "../sf2/sf2-quality.js";
 import { renderSF2NoteWebAudio } from "./sf2-webaudio-renderer.js";
 import { renderSF2NoteWorklet } from "./sf2-worklet-renderer.js";
 
@@ -111,6 +112,10 @@ export function renderSF2Note(option) {
         if (stopWorklet) return stopWorklet;
     }
 
+    // Sound quality: the optional DSP stages are chosen when the voices are set
+    // up, so the preset has to be applied before the note starts rendering.
+    applySF2Quality(tsfQuality, this.settings);
+
     const songStartTime = this.states && this.states.startTime ? this.states.startTime : 0;
     const baseLatency = this.baseLatency || 0;
 
@@ -133,7 +138,7 @@ export function renderSF2Note(option) {
     const sampleRate = context.sampleRate || 44100;
     // Sample interpolation: 'linear' (default, matches TinySoundFont),
     // 'nearest' (lightest) or 'cubic' (smoothest).
-    const interpolation = resolveInterpolation(this.settings && this.settings.sf2Interpolation);
+    const interpolation = resolveInterpolation(resolveSF2Interpolation(this.settings));
     const noteFrames = Math.max(1, Math.round((stop - start) * sampleRate));
     const maxFrames = noteFrames + Math.round(SF2_MAX_TAIL_SECONDS * sampleRate);
 

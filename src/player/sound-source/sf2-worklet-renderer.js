@@ -34,6 +34,7 @@ import {
     tsfGainToDecibels,
 } from '../sf2/tsf-font.js';
 import { getSF2Font, getSF2PresetIndex } from './sf2-provider.js';
+import { resolveSF2Quality } from '../sf2/sf2-quality.js';
 
 /** App level trim, same value as the other SF2 renderers. */
 const SF2_OUTPUT_TRIM_DB = -12;
@@ -50,7 +51,7 @@ const PROCESSOR_NAME = 'picoaudio-sf2';
  * The processor class, as a factory so its source text can be evaluated inside
  * the worklet (it only depends on `tsfSynth` and worklet globals).
  */
-function createProcessor(tsfSynth) {
+function createProcessor(tsfSynth, quality) {
     return class PicoAudioSf2Processor extends AudioWorkletProcessor {
         constructor() {
             super();
@@ -98,6 +99,9 @@ function createProcessor(tsfSynth) {
                     break;
                 case 'allOff':
                     this.notes.length = 0;
+                    break;
+                case 'quality':
+                    Object.assign(quality, msg.quality);
                     break;
                 case 'capture':
                     this.capture = {
@@ -206,11 +210,13 @@ export function sf2WorkletSource() {
         `const tsfCents2Hertz = ${tsfCents2Hertz.toString()};`,
         `const tsfDecibelsToGain = ${tsfDecibelsToGain.toString()};`,
         `const tsfGainToDecibels = ${tsfGainToDecibels.toString()};`,
+        // mutable so a quality change applies to the notes started after it
+        'const quality = { filter: true, lfo: true, modEnv: true };',
         `const tsfSynth = (${createTsfSynth.toString()})({`,
         '    TSF_LOOPMODE_SUSTAIN, tsfTimecents2Secs, tsfCents2Hertz,',
-        '    tsfDecibelsToGain, tsfGainToDecibels,',
+        '    tsfDecibelsToGain, tsfGainToDecibels, quality,',
         '});',
-        `const Processor = (${createProcessor.toString()})(tsfSynth);`,
+        `const Processor = (${createProcessor.toString()})(tsfSynth, quality);`,
         `registerProcessor(${JSON.stringify(PROCESSOR_NAME)}, Processor);`,
     ].join('\n');
 }
@@ -394,6 +400,11 @@ export function renderSF2NoteWorklet(option) {
     }
 
     const id = engine.nextId++;
+    const quality = resolveSF2Quality(this.settings);
+    if (engine.quality !== quality) {
+        engine.node.port.postMessage({ type: 'quality', quality });
+        engine.quality = quality;
+    }
     engine.node.port.postMessage({
         type: 'note',
         id,

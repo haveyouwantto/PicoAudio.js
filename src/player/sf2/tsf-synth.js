@@ -20,6 +20,7 @@ import {
     tsfDecibelsToGain,
     tsfGainToDecibels,
 } from './tsf-font.js';
+import { applySF2Quality } from './sf2-quality.js';
 
 /**
  * The whole synthesizer as one self-contained factory.
@@ -37,7 +38,19 @@ export function createTsfSynth(deps) {
         tsfCents2Hertz,
         tsfDecibelsToGain,
         tsfGainToDecibels,
+        quality,
     } = deps;
+
+    /**
+     * Optional DSP stages, for the sound quality setting.
+     *
+     * The reference always runs all of them; switching one off is a deliberate
+     * trade of accuracy for CPU (tsf's own filter is the most expensive part of
+     * the per sample loop, and the LFOs / modulation envelope cost a little of
+     * the per block work). `quality` is read per note, so the worklet can change
+     * it while playing.
+     */
+    const q = quality || {};
 
 
     const TSF_RENDER_EFFECTSAMPLEBLOCK = 64;
@@ -311,11 +324,13 @@ export function createTsfSynth(deps) {
             voice.lowpass.QInv = 1.0 / Math.pow(10.0, (lowpassFilterQDB / 20.0));
             voice.lowpass.z1 = 0;
             voice.lowpass.z2 = 0;
-            voice.lowpass.active = (lowpassFc < 0.499);
+            voice.lowpass.active = q.filter !== false && (lowpassFc < 0.499);
             if (voice.lowpass.active) lowpassSetup(voice.lowpass, lowpassFc);
 
-            lfoSetup(voice.modlfo, region.delayModLFO, region.freqModLFO, font.outSampleRate);
-            lfoSetup(voice.viblfo, region.delayVibLFO, region.freqVibLFO, font.outSampleRate);
+            if (q.lfo !== false) {
+                lfoSetup(voice.modlfo, region.delayModLFO, region.freqModLFO, font.outSampleRate);
+                lfoSetup(voice.viblfo, region.delayVibLFO, region.freqVibLFO, font.outSampleRate);
+            }
 
             voices.push(voice);
         }
@@ -359,7 +374,7 @@ export function createTsfSynth(deps) {
         const input = font.samples;
         let outIdx = offset * 2;
 
-        const updateModEnv = !!(region.modEnvToPitch || region.modEnvToFilterFc);
+    const updateModEnv = q.modEnv !== false && !!(region.modEnvToPitch || region.modEnvToFilterFc);
         const updateModLFO = !!(v.modlfo.delta && (region.modLfoToPitch || region.modLfoToFilterFc || region.modLfoToVolume));
         const updateVibLFO = !!(v.viblfo.delta && region.vibLfoToPitch);
         const isLooping = (v.loopStart < v.loopEnd);
@@ -676,6 +691,13 @@ export function createTsfSynth(deps) {
     };
 }
 
+/**
+ * The optional DSP stages of the main thread instance. The renderers update it
+ * from the user's sound quality setting (see sf2-quality.js); the worklet keeps
+ * its own copy and can change it while playing.
+ */
+export const tsfQuality = { filter: true, lfo: true, modEnv: true };
+
 /** The main thread instance (the worklet builds its own from the source). */
 export const tsfSynth = createTsfSynth({
     TSF_LOOPMODE_SUSTAIN,
@@ -683,6 +705,7 @@ export const tsfSynth = createTsfSynth({
     tsfCents2Hertz,
     tsfDecibelsToGain,
     tsfGainToDecibels,
+    quality: tsfQuality,
 });
 
 export const TSF_RENDER_EFFECTSAMPLEBLOCK = tsfSynth.TSF_RENDER_EFFECTSAMPLEBLOCK;

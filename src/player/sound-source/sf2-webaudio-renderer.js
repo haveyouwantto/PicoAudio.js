@@ -41,6 +41,7 @@
 import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
 import { noteOnVoices } from "../sf2/tsf-synth.js";
 import { tsfCents2Hertz, tsfDecibelsToGain } from "../sf2/tsf-font.js";
+import { resolveSF2Quality } from "../sf2/sf2-quality.js";
 
 /** App level trim, same value as the DSP renderer. */
 const SF2_OUTPUT_TRIM_DB = -12;
@@ -280,6 +281,8 @@ export function renderSF2NoteWebAudio(option) {
     const context = this.context;
     const font = getSF2Font();
     if (!font) return null;
+    // Sound quality: leave out the optional stages this preset turns off.
+    const quality = resolveSF2Quality(this.settings);
 
     const songStartTime = this.states && this.states.startTime ? this.states.startTime : 0;
     const baseLatency = this.baseLatency || 0;
@@ -430,7 +433,7 @@ export function renderSF2NoteWebAudio(option) {
         let filter = null;
         let filterHeadroom = 0;
         const usableCents = Math.min(minFilterCents, TSF_FILTER_BYPASS_CENTS);
-        if (tsfCents2Hertz(usableCents) / sampleRate < TSF_MAX_FILTER_RATIO) {
+        if (quality.filter && tsfCents2Hertz(usableCents) / sampleRate < TSF_MAX_FILTER_RATIO) {
             filterHeadroom = TSF_FILTER_BYPASS_CENTS - region.initialFilterFc;
             const fc = Math.min(tsfCents2Hertz(region.initialFilterFc), maxFilterHz);
             if (fc > 0) {
@@ -487,8 +490,10 @@ export function renderSF2NoteWebAudio(option) {
         // --- modulation --------------------------------------------------
         // tsf resolves the modulation envelope and the LFOs per sample block and
         // applies them to the pitch ratio, the cutoff and the note gain.
-        if (region.modEnvToPitch) scheduleModEnvelope(source.detune, modEnv, region.modEnvToPitch, start, stop, velocity);
-        if (filter && envFilterCents) {
+        if (quality.modEnv && region.modEnvToPitch) {
+            scheduleModEnvelope(source.detune, modEnv, region.modEnvToPitch, start, stop, velocity);
+        }
+        if (quality.modEnv && filter && envFilterCents) {
             // clamped so fres stays inside the range tsf would filter
             const amount = Math.min(envFilterCents, filterHeadroom);
             scheduleModEnvelope(filter.detune, modEnv, amount, start, stop, velocity);
@@ -542,9 +547,11 @@ export function renderSF2NoteWebAudio(option) {
             voiceNodes.push(osc);
             return osc;
         };
-        addLfo(region.delayModLFO, region.freqModLFO, region.modLfoToPitch,
-            lfoFilterCents, lfoVolumeCents);
-        addLfo(region.delayVibLFO, region.freqVibLFO, region.vibLfoToPitch, 0, 0);
+        if (quality.lfo) {
+            addLfo(region.delayModLFO, region.freqModLFO, region.modLfoToPitch,
+                lfoFilterCents, lfoVolumeCents);
+            addLfo(region.delayVibLFO, region.freqVibLFO, region.vibLfoToPitch, 0, 0);
+        }
 
         // --- graph -------------------------------------------------------
         let tail = source;
