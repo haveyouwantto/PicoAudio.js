@@ -67,6 +67,25 @@ const SF2_OUTPUT_TRIM = Math.pow(10, SF2_OUTPUT_TRIM_DB / 20);
 const PICO_GENERATE_VOLUME_REFERENCE = 0.15;
 
 /**
+ * One chunk scratch buffer shared by every streaming note.
+ *
+ * scheduleChunk() renders a chunk and copies it into the chunk's AudioBuffer
+ * before it returns, so nothing keeps a reference to the scratch - a single
+ * buffer is enough. Allocating one per note instead cost a 1 second (352 KB)
+ * Float32Array per note, which at GeneralUser density (~50 note-ons/s) is
+ * ~17 MB/s of garbage on top of the chunk buffers themselves; that showed up
+ * as recurring 40-80 ms main thread pauses (measured with
+ * scripts/browser-bench.mjs --page=rt-profile).
+ */
+let streamScratch = null;
+
+function getStreamScratch(frames) {
+    const samples = frames * 2;
+    if (!streamScratch || streamScratch.length < samples) streamScratch = new Float32Array(samples);
+    return streamScratch;
+}
+
+/**
  * Render a complete SF2 note into the audio graph.
  * Must be called with `this` = PicoAudio instance:
  *   renderSF2Note.call(this, option) -> () => void (stop function) | null
@@ -177,8 +196,6 @@ export function renderSF2Note(option) {
     const chunkFrames = streaming
         ? Math.max(1024, Math.round(SF2_STREAM_CHUNK_SECONDS * sampleRate))
         : maxFrames;
-    const scratch = streaming ? new Float32Array(chunkFrames * 2) : null;
-
     const renderer = createNoteRenderer(
         font, presetIndex, option.pitch, velocity / 127, noteFrames, maxFrames, pitchBends, panChanges, interpolation);
 
@@ -199,6 +216,7 @@ export function renderSF2Note(option) {
     function scheduleChunk() {
         if (stopped) return false;
         const first = renderer.frames;
+        const scratch = streaming ? getStreamScratch(chunkFrames) : null;
         const written = renderer.render(chunkFrames, scratch);
         if (!written) return false;
         const data = scratch

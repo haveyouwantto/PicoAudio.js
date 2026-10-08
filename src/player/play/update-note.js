@@ -97,6 +97,18 @@ export default class UpdateNote {
             if (states.updateBufMaxTime > 1100) states.updateBufMaxTime = 1100;
         }
 
+        // Web Audio playback pays for the lookahead in audio thread time: a
+        // node graph that is merely scheduled costs the same as one that is
+        // playing (measured: the same song at 100 / 400 / 800 ms of lookahead
+        // uses 0.56 / 0.59 / 0.68 of a core), and nothing has to be pre-rendered
+        // for that engine - note-on costs ~1 ms. Cap the adaptive growth so a
+        // busy main thread cannot spiral into a much bigger live graph.
+        if (settings.sf2Engine == 'webaudio' && settings.soundQuality != 0) {
+            const lookaheadCap = 150;
+            if (states.updateBufTime > lookaheadCap) states.updateBufTime = lookaheadCap;
+            if (states.updateBufMaxTime > lookaheadCap) states.updateBufMaxTime = lookaheadCap;
+        }
+
         // サウンドが重すぎる場合、先読み度合いを小さくして負荷軽減 //
         if (states.latencyLimitTime > 150) {
             cTimeSum = pTimeSum;
