@@ -3,6 +3,7 @@ import { getWave, getWaveTable, quickfadeArray, findClosestNumberIndex, getVolum
 import { renderSF2Note } from "./sf2-renderer";
 import { HAS_SF2, HAS_WAVE } from "../../features.js";
 import { resolveSoundQuality } from "../sound-quality.js";
+import { noteDropped } from "../../util/note-debug.js";
 
 export default function createNote(option) {
     const quality = resolveSoundQuality(this.settings);
@@ -16,7 +17,10 @@ export default function createNote(option) {
     const isBuffer = (HAS_WAVE && quality == 1) || (HAS_SF2 && quality == 4);
     const needsFilter = (HAS_WAVE && (quality == 1 || quality == -1)) || (HAS_SF2 && quality == 4);
     const note = this.createBaseNote(option, isBuffer, true, false, true, needsFilter); // oscillatorのstopはこちらで実行するよう指定
-    if (note.isGainValueZero) return null;
+    if (note.isGainValueZero) {
+        noteDropped(this, 'zero gain for this note', option);
+        return null;
+    }
 
     const oscillator = note.oscillator;
     const gainNode = note.gainNode;

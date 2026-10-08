@@ -34,7 +34,8 @@ import {
     tsfGainToDecibels,
 } from '../sf2/tsf-font.js';
 import { getSF2Font, getSF2PresetIndex } from './sf2-provider.js';
-import { resolveSF2Quality } from '../sf2/sf2-quality.js';
+import { resolveSF2Quality, resolveSF2Interpolation } from '../sf2/sf2-quality.js';
+import { noteDropped } from '../../util/note-debug.js';
 
 /** App level trim, same value as the other SF2 renderers. */
 const SF2_OUTPUT_TRIM_DB = -12;
@@ -339,7 +340,10 @@ export function renderSF2NoteWorklet(option) {
     if (velocity === 0) return null;
 
     const presetIndex = getSF2PresetIndex(option.instrument, isDrum, option.bank || 0, option.pitch, velocity);
-    if (presetIndex < 0) return null;
+    if (presetIndex < 0) {
+        noteDropped(this, 'no preset for program/bank', option);
+        return null;
+    }
 
     const sampleRate = context.sampleRate || 44100;
     const noteFrames = Math.max(1, Math.round((stop - start) * sampleRate));
@@ -417,7 +421,8 @@ export function renderSF2NoteWorklet(option) {
         pitchBends,
         panChanges,
         gains,
-        interpolation: this.settings && this.settings.sf2Interpolation,
+        // the quality preset can override the interpolation (low = nearest)
+        interpolation: resolveSF2Interpolation(this.settings),
     });
 
     // Universal mute for the stop manager (song stop / note stealing).
