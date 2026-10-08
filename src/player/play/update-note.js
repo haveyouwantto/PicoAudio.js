@@ -1,7 +1,6 @@
 import ArrayUtil from '../../util/array-util.js';
 import ParseUtil from '../../util/parse-util.js';
 import {Performance} from '../../util/ponyfill.js';
-import { noteDropped } from '../../util/note-debug.js';
 
 export default class UpdateNote {
     /**
@@ -118,10 +117,7 @@ export default class UpdateNote {
                 const curTime = cnt == 0 ? this.initCurrentTime - states.startTime
                     : context.currentTime - states.startTime;
                 // 終わったノートは演奏せずにスキップ
-                if (curTime >= note.stopTime) {
-                    noteDropped(picoAudio, 'already over when the scheduler reached it', note);
-                    continue;
-                }
+                if (curTime >= note.stopTime) continue;
                 // （シークバーで途中から再生時）startTimeが過ぎたものは鳴らさない
                 if (cnt == 0 && curTime > note.startTime + baseLatency) continue;
                 // 演奏開始時間 - 先読み時間(ノート予約) になると演奏予約or演奏開始
@@ -162,7 +158,6 @@ export default class UpdateNote {
                             }
                             if (sounding.length >= limit) {
                                 // 制限が 0 など、空けられる枠が無い場合
-                                noteDropped(picoAudio, 'polyphony limit (maxPoly/maxPercPoly)', note);
                                 continue;
                             }
                         }

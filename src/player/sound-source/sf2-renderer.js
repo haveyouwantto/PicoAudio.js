@@ -22,7 +22,6 @@
 import { getSF2Font, getSF2PresetIndex } from "./sf2-provider.js";
 import { createNoteRenderer, resolveInterpolation, tsfQuality } from "../sf2/tsf-synth.js";
 import { applySF2Quality, resolveSF2Interpolation } from "../sf2/sf2-quality.js";
-import { noteDropped } from "../../util/note-debug.js";
 import { renderSF2NoteWebAudio } from "./sf2-webaudio-renderer.js";
 import { renderSF2NoteWorklet } from "./sf2-worklet-renderer.js";
 
@@ -134,10 +133,7 @@ export function renderSF2Note(option) {
     if (velocity === 0) return null;
 
     const presetIndex = getSF2PresetIndex(option.instrument, isDrum, option.bank || 0, option.pitch, velocity);
-    if (presetIndex < 0) {
-        noteDropped(this, 'no preset for program/bank', option);
-        return null;
-    }
+    if (presetIndex < 0) return null;
 
     const sampleRate = context.sampleRate || 44100;
     // Sample interpolation: 'linear' (default, matches TinySoundFont),
@@ -324,7 +320,6 @@ export function renderSF2Note(option) {
     }
 
     if (sources.length === 0) {
-        noteDropped(this, 'no soundfont region matched the key/velocity', option);
         try { performanceGain.disconnect(); stopGainNode.disconnect(); } catch (e) { /* noop */ }
         return null;
     }
