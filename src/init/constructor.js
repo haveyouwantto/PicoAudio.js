@@ -39,7 +39,7 @@ export default function picoAudioConstructor(argsObj) {
         isOfflineRendering: false, // TODO 演奏データを作成してから演奏する
         isSameDrumSoundOverlap: false, // 同じドラムの音が重なることを許容するか
         baseLatency: -1, // レイテンシの設定 -1:auto
-        soundQuality: 1, // Set the sound quality level: 0 for basic waveform, 1 for FM waveform
+        soundQuality: 1, // 0 = basic waveform, 1 = built-in GM synth instruments
         sf2Interpolation: 'linear', // SF2 sample interpolation: 'linear' (TSF reference) | 'nearest' | 'cubic'
         sf2Streaming: true, // SF2: synthesize long notes in chunks while they play (false = render the whole note up front)
         sf2Engine: 'dsp', // SF2 synthesis: 'dsp' (TinySoundFont port, exact) | 'webaudio' (native nodes, much cheaper)

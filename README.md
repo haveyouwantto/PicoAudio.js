@@ -10,7 +10,7 @@ switchable sound engines and builds that contain only the engines you need.
 | `settings.soundQuality` | engine | asset needed |
 | --- | --- | --- |
 | `0` | 8-bit style basic waveforms (upstream oscillators) | none |
-| `1` (default) | additive synthesis from a wavetable instrument set | built in table, or `loadWaves()` |
+| `1` (default) | hand-programmed GM synth instruments | none |
 | `3` | deprecated slot, kept as an alias of `4` | – |
 | `4` | SoundFont 2 (`.sf2`) playback, GM drum kits included | `loadSF2(buffer)` |
 
@@ -18,15 +18,15 @@ switchable sound engines and builds that contain only the engines you need.
 
 - Parses SMF (Standard MIDI File) and plays it back, including noteOn/noteOff
   events
-- `soundQuality` 0 / 1 / 4: basic oscillators, additive synthesis from a
-  128 program x 5 octave wavetable set (plucked programs get a filter sweep),
-  or SoundFont 2 played by a TinySoundFont port or by native Web Audio nodes
+- `soundQuality` 0 / 1 / 4: basic oscillators, hand-programmed GM synth
+  instruments, or SoundFont 2 played by a TinySoundFont port or by native Web
+  Audio nodes
 - Chunked synthesis for very long notes, offline rendering
   (`OfflineAudioContext`) and WAV export
-- Engines that are not ready are never used: a wavetable / soundfont mode
-  without its table / font loaded plays the basic engine instead
-- Build variants: `basic` / `wave` / `wave-nodefault` / `sf2` /
-  `sf2-wave-nodefault` / `full` (170 KB - 341 KB, see
+- Engines that are not ready are never used: a synth build that is not
+  included, or a soundfont mode without its font loaded, plays the basic
+  engine instead
+- Build variants: `basic` / `wave` / `sf2` / `full` (see
   [Build variants](#build-variants))
 
 ## Samples
@@ -189,8 +189,8 @@ PicoAudio.setCC111(enable: boolean): void
 // Which engines this build contains: { wave: boolean, sf2: boolean }
 PicoAudio.features
 
-// Wavetable instrument set (soundQuality 1) as a binary buffer
-PicoAudio.loadWaves(buffer: ArrayBuffer): void
+// Deprecated no-op: soundQuality 1 now uses the built-in synth instruments
+PicoAudio.loadWaves(buffer?: ArrayBuffer): void
 
 // SoundFont 2 file (soundQuality 4)
 PicoAudio.loadSF2(buffer: ArrayBuffer): boolean
@@ -296,9 +296,6 @@ PicoAudio.getTime(tick: number): number
 PicoAudio.getTiming(time: number): number
 ```
 
-## License
-Code released under the MIT License
-
 ## SoundFont (SF2) playback
 
 With `soundQuality = 4` PicoAudio plays SoundFont 2 (`.sf2`) files. The engine is
@@ -337,25 +334,23 @@ fall back to one shot rendering (no dropouts).
 
 ## Build variants
 
-Six bundles are built from the same sources. They only differ in which sound
+Four bundles are built from the same sources. They only differ in which sound
 engines are compiled in: `src/features.js` is replaced per variant, so the
-excluded engines (and the embedded waveform table) are dropped from the bundle
-instead of merely being switched off at runtime.
+excluded engines are dropped from the bundle instead of merely being switched
+off at runtime.
 
 | variant | nodejs esm | `soundQuality` | size (nodejs esm) |
 | --- | --- | --- | --- |
-| `full` (default) | `dist/nodejs/picoaudio.mjs` | 0, 1, 4 | 341 KB |
-| `sf2-wave-nodefault` | `dist/nodejs/picoaudio.sf2-wave-nodefault.mjs` | 0, 1, 4 (no built in table) | 302 KB |
-| `sf2` | `dist/nodejs/picoaudio.sf2.mjs` | 0, 4 | 279 KB |
-| `wave` | `dist/nodejs/picoaudio.wave.mjs` | 0, 1 | 232 KB |
-| `wave-nodefault` | `dist/nodejs/picoaudio.wave-nodefault.mjs` | 0, 1 (no built in table) | 192 KB |
-| `basic` | `dist/nodejs/picoaudio.basic.mjs` | 0 | 170 KB |
+| `full` (default) | `dist/nodejs/picoaudio.mjs` | 0, 1, 4 | 372 KB |
+| `sf2` | `dist/nodejs/picoaudio.sf2.mjs` | 0, 4 | 298 KB |
+| `wave` | `dist/nodejs/picoaudio.wave.mjs` | 0, 1 | 234 KB |
+| `basic` | `dist/nodejs/picoaudio.basic.mjs` | 0 | 160 KB |
 
 Every variant is also built for the browser as
 `dist/browser/PicoAudio[.variant].js` and `.min.js`.
 
 `soundQuality` 0 is the basic oscillator mode (the upstream PicoAudio feature
-set), 1 the periodic wave / wavetable mode and 4 SoundFont 2 playback
+set), 1 the hand-programmed GM synth engine and 4 SoundFont 2 playback
 (`loadSF2`). The old sample bank value 3 is gone: 3 now plays SF2. The `basic`
 build keeps percussion, that kit is synthesised from oscillators and noise,
 like upstream.
@@ -363,23 +358,22 @@ like upstream.
 ```bash
 npm run build                # build every variant
 npm run build:full           # ...or one of them:
-npm run build:sf2            # build:sf2-wave-nodefault, build:wave,
-npm run build:wave           # build:wave-nodefault, build:basic
+npm run build:sf2            # build:wave, build:basic
+npm run build:wave
 ```
 
 At runtime `PicoAudio.features` reports what a bundle contains, e.g.
 `{ wave: true, sf2: true }`.
 
-Engines that are not ready are never used: selecting `soundQuality` 1 or 4
-without a loaded wavetable / soundfont - or in a build that does not contain
-that engine at all - plays the basic waveform engine instead, so a player that
-has not prepared its sound source still makes sound. `loadSF2()` returns
-`false` in builds without the SF2 engine, and `loadSamples()` is a deprecated
-no-op (that engine is gone).
+Engines that are not ready are never used: selecting `soundQuality` 1 in a
+build without the synth engine, or `soundQuality` 4 without a loaded soundfont,
+plays the basic waveform engine instead. `loadSF2()` returns `false` in builds
+without the SF2 engine. `loadWaves()`, `loadWavetable()` and the old
+`soundQuality: -1` sine mode are deprecated no-ops with console warnings.
 
-The `wave-nodefault` build carries no waveform table at all, so a host that
-wants the wavetable mode must supply its own: `picoAudio.loadWaves(buffer)`
-before the first note. Until then `soundQuality: 1` plays the basic engine.
+
+## License
+Code released under the MIT License
 
 ## Credits
 

@@ -1,19 +1,19 @@
-import InterpolationUtil from "../../util/interpolation-util";
-import { getWave, getWaveTable, quickfadeArray, findClosestNumberIndex, getVolumeMul, WAVETABLE_SIZE } from "./periodic-wave-man";
 import { renderSF2Note } from "./sf2-renderer";
 import { HAS_SF2, HAS_WAVE } from "../../features.js";
 import { resolveSoundQuality } from "../sound-quality.js";
 import createSynthInstrumentNote, { hasSynthInstrument } from "./synth-instruments";
 
 export default function createNote(option) {
-    // Sound quality 1 patches do not need a wavetable, so check them before
-    // resolveSoundQuality() falls back to the basic engine when none is loaded.
-    if (HAS_WAVE && !option.forceWavetable && this.settings.soundQuality == 1
-        && hasSynthInstrument(option.instrument)) {
-        return createSynthInstrumentNote.call(this, option);
+    // Sound quality 1 is the hand-programmed synth engine. Every GM program
+    // has a patch; an unknown program falls back to the basic waveform mode.
+    if (HAS_WAVE && this.settings.soundQuality == 1) {
+        if (hasSynthInstrument(option.instrument)) {
+            return createSynthInstrumentNote.call(this, option);
+        }
     }
 
-    const quality = resolveSoundQuality(this.settings);
+    let quality = resolveSoundQuality(this.settings);
+    if (quality == 1) quality = 0;
     // SF2 SoundFont mode: the renderer builds its own complete audio graph
     // (zone/layer selection, envelope, filters, LFOs), so we bypass
     // createBaseNote entirely to avoid creating a bare BufferSource.
@@ -21,15 +21,12 @@ export default function createNote(option) {
         return renderSF2Note.call(this, option);
     }
 
-    const isBuffer = (HAS_WAVE && quality == 1) || (HAS_SF2 && quality == 4);
-    const needsFilter = (HAS_WAVE && (quality == 1 || quality == -1)) || (HAS_SF2 && quality == 4);
-    const note = this.createBaseNote(option, isBuffer, true, false, true, needsFilter); // oscillatorのstopはこちらで実行するよう指定
+    const note = this.createBaseNote(option, false, true, false, true, false);
     if (note.isGainValueZero) return null;
 
     const oscillator = note.oscillator;
     const gainNode = note.gainNode;
     const stopGainNode = note.stopGainNode;
-    const filter = note.filter;
     let isPizzicato = false;
     let isNoiseCut = false;
 
@@ -39,8 +36,6 @@ export default function createNote(option) {
     gainNode.gain.value *= this.settings.instrumentAttenuation;  // Instrument volume attenuation
 
     switch (quality) {
-        case -1:
-            break;
         case 0:
             switch (this.channels[note.channel][0] * 1000 || option.instrument) {
                 // Sine
@@ -87,74 +82,6 @@ export default function createNote(option) {
             }
             break;
 
-        case 1: {
-            if (!HAS_WAVE) break;
-            const inst = getWaveTable(this.context, option.instrument, findClosestNumberIndex(option.pitch));
-            // No table loaded yet (build without the built in one, loadWaves()
-            // not called): leave the source empty, it plays silence.
-            if (inst.wavetable) oscillator.buffer = inst.wavetable;
-            // Set playbackRate so the wavetable cycles at the correct frequency.
-            // wavetable recorded at sampleRate has fund freq = sampleRate / WAVETABLE_SIZE,
-            // so we need playbackRate = targetFreq * WAVETABLE_SIZE / sampleRate.
-            if (note.pitch) {
-                oscillator.playbackRate.value = note.pitch * WAVETABLE_SIZE / this.context.sampleRate;
-            }
-            // Re-schedule pitch bend on playbackRate (not detune).
-            // createBaseNote's isBuffer path scheduled detune with octave offset + bend,
-            // but we use playbackRate for base pitch. Pitch bend moves to playbackRate
-            // so that detune stays free for vibrato overlay.
-            oscillator.detune.cancelScheduledValues(0);
-            oscillator.detune.value = 0;
-            if (option.pitchBend && option.pitchBend.length && note.pitch) {
-                const songStartTime = this.states.startTime;
-                const baseLatency = this.baseLatency;
-                const baseRate = note.pitch * WAVETABLE_SIZE / this.context.sampleRate;
-                option.pitchBend.forEach((p) => {
-                    const t = Math.max(0, p.time + songStartTime + baseLatency);
-                    // Convert semitone offset to playbackRate multiplier: rate * 2^(semitones/12)
-                    oscillator.playbackRate.setValueAtTime(
-                        baseRate * Math.pow(2, p.value / 12),
-                        t
-                    );
-                });
-            }
-            // Setup modulation (CC1) — skipped by createBaseNote's isBuffer path
-            // because it only connects modulation to oscillator.frequency (OscillatorNode only).
-            // For BufferSource we route modulation to oscillator.detune.
-            if (option.modulation && (option.modulation.length >= 2 || option.modulation[0].value > 0) && note.pitch) {
-                const modOsc = this.context.createOscillator();
-                const modGain = this.context.createGain();
-                // Original: modGain.value = pitch * 10/440 * m, connected to oscillator.frequency (Hz).
-                // Conversion to detune (cents): cents = 1200 * log2(1 + delta_f/f).
-                // For small mod: cents ≈ 1200/(f*ln2) * delta = 1200/(f*ln2) * (f*10/440*m) = 1200*10/(440*ln2)*m ≈ 39.3*m.
-                // So removal of pitch factor is correct: detune needs a pure m with a ~39.3x scaling.
-                const centsScale = (1200 * 10) / (440 * Math.LN2); // ≈ 39.35 cents per unit m
-                const scaleNode = this.context.createGain();
-                scaleNode.gain.value = centsScale;
-                const initialM = Math.min(1.0, option.modulation[0].value / 127);
-                modGain.gain.value = initialM;
-                const songStartTime = this.states.startTime;
-                const baseLatency = this.baseLatency;
-                let firstNode = true;
-                option.modulation.forEach((p) => {
-                    if (firstNode) { firstNode = false; return; }
-                    const m = Math.min(1.0, p.value / 127);
-                    const t = Math.max(0, p.time + songStartTime + baseLatency);
-                    modGain.gain.setValueAtTime(m, t);
-                });
-                modOsc.frequency.value = 6;
-                modOsc.connect(modGain);
-                modGain.connect(scaleNode);
-                scaleNode.connect(oscillator.detune);
-                if (note.cleanup) note.cleanup.add(modOsc, modGain, scaleNode);
-                modOsc.start(note.start);
-                this.stopAudioNode(modOsc, note.stop, modGain);
-            }
-            // Cache inst ref on note for envelope reuse below, avoiding duplicate getWaveTable() call
-            note._inst = inst;
-            break;
-        }
-
         case 4: {
             // SF2 SoundFont sample playback — delegated to sf2-renderer.js.
             // (createNote short-circuits above for soundQuality=4, this is a
@@ -165,8 +92,8 @@ export default function createNote(option) {
     }
 
     // 音の終わりのプチプチノイズが気になるので、音の終わりに5ms減衰してノイズ軽減 //
-    // Only applies to OscillatorNode (not BufferSource used by quality=1/3)
-    if (!isBuffer && (oscillator.type == "sine" || oscillator.type == "triangle")
+    // Only applies to the basic oscillator path (synth and SF2 return above).
+    if ((oscillator.type == "sine" || oscillator.type == "triangle")
         && !isPizzicato && note.stop - note.start > 0.01) {
         isNoiseCut = true;
     }
@@ -241,130 +168,6 @@ export default function createNote(option) {
                 }
             }
             break;
-        case -1:
-        case 1: {
-            if (!HAS_WAVE) break;
-            // quality=1: inst already resolved & cached by the waveform selection block above
-            let inst = note._inst;
-            if (!inst) inst = getWave(this.context, option.instrument, findClosestNumberIndex(option.pitch));
-            // Apply envelope to note
-            let instEnvelope = inst.adsr;
-            const attack = instEnvelope[0], decay = instEnvelope[1], sustain = instEnvelope[2], release = instEnvelope[3];
-            const isPluck = quickfadeArray[option.instrument];
-            let velocity = gainNode.gain.value * 1.3;
-            const attackClamped = Math.max(attack, 0.001);
-
-            // Setup vibrato effect (real-time OscillatorNode LFO — avoids expensive
-            // setValueCurveAtTime with 4410-element Float32Array per note).
-            try {
-                const instrumentVibrato = inst.vibrato;
-                if (instrumentVibrato > 0) {
-                    const vibOsc = this.context.createOscillator();
-                    const vibGain = this.context.createGain();
-                    // The original curve stretches sine(600 Hz, 0.1s) over 10s → effective 6 Hz
-                    vibOsc.frequency.value = 6;
-                    vibGain.gain.value = instrumentVibrato;
-                    vibOsc.connect(vibGain);
-                    vibGain.connect(oscillator.detune);
-
-                    // Dynamic vibrato: modulate gain according to expression
-                    if (option.expression) {
-                        const songStartTime = this.states.startTime;
-                        const baseLatency = this.baseLatency;
-                        option.expression.forEach(element => {
-                            const t = Math.max(0, element.time + songStartTime + baseLatency);
-                            vibGain.gain.setValueAtTime(
-                                instrumentVibrato * Math.pow(element.value / 127, 2),
-                                t
-                            );
-                        });
-                    }
-
-                    vibOsc.start(note.start);
-                    this.stopAudioNode(vibOsc, note.stop, vibGain);
-                    if (note.cleanup) note.cleanup.add(vibOsc, vibGain);
-                }
-            } catch (e) {
-                console.error(e); // Log any errors
-            }
-
-            gainNode.gain.setValueAtTime(0, note.start);
-            // Attack phase
-            if (isPluck) {
-                velocity *= getVolumeMul(option.pitch)
-            }
-            gainNode.gain.setTargetAtTime(velocity, note.start, attackClamped / 3);
-
-            // Decay phase
-
-            if (isPluck) {
-                const decayTime = Math.max(decay * 1.7 * Math.pow(2, (60 - option.pitch) / 18), 0.5);
-
-                // 获取当前音符的基频和基础明亮度
-                // Use note.pitch for BufferSource compatibility (no .frequency property)
-                const pitchFreq = isBuffer ? note.pitch : oscillator.frequency.value;
-                const cutoffFreq = 492.35 * Math.exp(2.5 * option.velocity);
-
-                const nyquist = this.context.sampleRate / 2;
-
-                // 低频亮度补偿：低音弦在拨动时通常产生比例更高的瞬态分量。
-                // 以 60 (C4) 为基点，每低 3 个八度补偿约 2 倍的倍率，让低音更"脆"。
-                const pitchComp = Math.pow(2, (60 - option.pitch) / 36);
-
-                // 初始阶段：必须足够高，包含完整的拨弦瞬态泛音
-                // 应用亮度补偿 pitchComp
-                const filterStart = Math.min(Math.max(pitchFreq * 4 * pitchComp, cutoffFreq * 1.5), nyquist);
-
-                // 目标阶段：滤波器闭合的目标，不能过高（过高会导致失去滤波效果，像没加 filter），
-                // 同时不能低于基频的 1.2 倍（防止高音被"吃"掉发闷）。
-                const filterTarget = Math.min(Math.max(pitchFreq * 1.2, cutoffFreq * 0.05), nyquist);
-
-                // 滤波器收敛速度：必须保持较快，产生"迅速消退的明亮感"。
-                // 不能用 decay，否则低音衰减太慢，导致听感如同没加filter。
-                const filterDecay = decayTime / 6;
-
-                gainNode.gain.setTargetAtTime(0, note.start + attackClamped, decayTime / 2);
-                if (filter) {
-                    filter.Q.value = -3;
-                    filter.frequency.setValueAtTime(filterStart, note.start + attackClamped);
-                    filter.frequency.setTargetAtTime(filterTarget, note.start + attackClamped, filterDecay);
-                }
-            } else {
-                gainNode.gain.setTargetAtTime(velocity * sustain, note.start + attackClamped, decay / 2);
-
-                if (option.expression) {
-                    const songStartTime = this.states.startTime;
-                    const baseLatency = this.baseLatency;
-                    // Use note.pitch for BufferSource compatibility (no .frequency property)
-                    const pitchFreq = isBuffer ? note.pitch : (oscillator.frequency.value || 440);
-                    const nyquist = this.context.sampleRate / 2;
-
-                    // 将 Expression (CC11) 映射到滤波器截断频率
-                    // 随着声音变大，滤波器开口也随之变大，使音色变亮
-                    option.expression.forEach((p) => {
-                        const t = Math.max(0, p.time + songStartTime + baseLatency);
-                        const expScale = p.value / 127;
-
-                        const baseCutoff = pitchFreq * 4;
-                        const maxCutoff = Math.min(nyquist, 16000);
-                        const targetFreq = baseCutoff + (maxCutoff - baseCutoff) * Math.pow(expScale, 4);
-
-                        // 使用 setTargetAtTime 确保 expression point 之间有平滑过渡
-                        if (filter) filter.frequency.linearRampToValueAtTime(targetFreq, t);
-                    });
-                }
-            }
-
-            // Sustain phase (no explicit scheduling needed)
-
-            // Release phase
-            const releaseClamped = Math.min(release, 0.25);
-            gainNode.gain.setTargetAtTime(0, note.stop, releaseClamped / 3);
-
-            this.stopAudioNode(oscillator, note.stop + releaseClamped, stopGainNode, isNoiseCut);
-        }
-            break;
-
         case 4: {
             // SF2 envelope scheduling now lives in sf2-renderer.js.
             // This case is unreachable for soundQuality=4 (short-circuited above),

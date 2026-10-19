@@ -9,21 +9,19 @@ Web Audio API で MIDI (Standard MIDI File = SMF) を再生する JavaScript ラ
 | `settings.soundQuality` | 発音エンジン | 必要な音源 |
 | --- | --- | --- |
 | `0` | 8bit 風の基本波形 (upstream のオシレータ) | 不要 |
-| `1` (既定) | 波形テーブルによる加算合成 | 内蔵テーブル、または `loadWaves()` |
+| `1` (既定) | 手書き GM シンセ音色 | 不要 |
 | `3` | 廃止 (4 の別名) | - |
 | `4` | SoundFont2 (.sf2) 再生 (GM ドラムキット込み) | `loadSF2(buffer)` |
 
 ## 主な機能
 
 - SMF (Standard MIDI File) のパースと再生、noteOn/noteOff イベント
-- `soundQuality` 0 / 1 / 4 の切り替え。1 は GM 128 音色 × 5 オクターブの加算合成
-  (撥弦系にはフィルタ掃引付き)、4 は TinySoundFont 移植版または Web Audio ノードで
-  SoundFont2 を再生
+- `soundQuality` 0 / 1 / 4 の切り替え。1 は手書きの GM 128 シンセ音色、
+  4 は TinySoundFont 移植版または Web Audio ノードで SoundFont2 を再生
 - 長い音符のチャンク単位のストリーミング合成、オフライン描画
   (`OfflineAudioContext`)、WAV 書き出し
 - 音源が未読み込みのときは自動で basic エンジンにフォールバック
-- ビルドバリエーション: `basic` / `wave` / `wave-nodefault` / `sf2` /
-  `sf2-wave-nodefault` / `full` (170 KB 〜 341 KB、
+- ビルドバリエーション: `basic` / `wave` / `sf2` / `full`
   [ビルドバリエーション](#ビルドバリエーション) 参照)
 
 ## サンプル
@@ -184,7 +182,8 @@ PicoAudio.setCC111(enable: boolean): void
 PicoAudio.features
 
 // 波形テーブル音源 (soundQuality 1) をバイナリで読み込む
-PicoAudio.loadWaves(buffer: ArrayBuffer): void
+// 廃止: soundQuality 1 は内蔵シンセ音色を使います
+PicoAudio.loadWaves(buffer?: ArrayBuffer): void
 
 // SoundFont2 ファイル (soundQuality 4)
 PicoAudio.loadSF2(buffer: ArrayBuffer): boolean
@@ -291,9 +290,6 @@ PicoAudio.getTime(tick: number): number
 PicoAudio.getTiming(time: number): number
 ```
 
-## License
-Code released under the MIT License
-
 ## SoundFont (SF2) 再生
 
 `soundQuality = 4` のとき、PicoAudio は SoundFont2 (.sf2) ファイルで発音します。
@@ -330,42 +326,40 @@ picoAudio.getSF2Interpolation();
 ## ビルドバリエーション
 
 同じソースから 6 種類のバンドルをビルドします。違いは**どの発音エンジンを埋め込むか**だけで、
-ビルドごとに `src/features.js` を差し替えるため、含めないエンジン (および内蔵の波形テーブル) は
+ビルドごとに `src/features.js` を差し替えるため、含めないエンジンは
 単に無効化されるのではなくバンドルから取り除かれます。
 
 | ビルド | nodejs esm | `soundQuality` | サイズ (nodejs esm) |
 | --- | --- | --- | --- |
-| `full` (既定) | `dist/nodejs/picoaudio.mjs` | 0, 1, 4 | 341 KB |
-| `sf2-wave-nodefault` | `dist/nodejs/picoaudio.sf2-wave-nodefault.mjs` | 0, 1, 4 (内蔵テーブル無し) | 302 KB |
-| `sf2` | `dist/nodejs/picoaudio.sf2.mjs` | 0, 4 | 279 KB |
-| `wave` | `dist/nodejs/picoaudio.wave.mjs` | 0, 1 | 232 KB |
-| `wave-nodefault` | `dist/nodejs/picoaudio.wave-nodefault.mjs` | 0, 1 (内蔵テーブル無し) | 192 KB |
-| `basic` | `dist/nodejs/picoaudio.basic.mjs` | 0 | 170 KB |
+| `full` (既定) | `dist/nodejs/picoaudio.mjs` | 0, 1, 4 | 372 KB |
+| `sf2` | `dist/nodejs/picoaudio.sf2.mjs` | 0, 4 | 298 KB |
+| `wave` | `dist/nodejs/picoaudio.wave.mjs` | 0, 1 | 234 KB |
+| `basic` | `dist/nodejs/picoaudio.basic.mjs` | 0 | 160 KB |
 
 ブラウザ用には各ビルドを `dist/browser/PicoAudio[.variant].js` と `.min.js` としても出力します。
 
-`soundQuality` 0 は基本波形 (upstream の機能セット)、1 は周期波形/波形テーブル、
+`soundQuality` 0 は基本波形 (upstream の機能セット)、1 は手書き GM シンセ音色、
 4 は SoundFont2 (`loadSF2`) です。旧サンプル音源の 3 は廃止し、3 は SF2 を再生します。
 `basic` ビルドにも打楽器は含まれます (upstream と同じくオシレータとノイズで合成)。
 
 ```bash
 npm run build                # 全ビルド
 npm run build:full           # 個別にビルドする場合:
-npm run build:sf2            # build:sf2-wave-nodefault, build:wave,
-npm run build:wave           # build:wave-nodefault, build:basic
+npm run build:sf2            # build:wave, build:basic
+npm run build:wave
 ```
 
 実行時に `PicoAudio.features` でそのビルドに含まれるエンジンが分かります
 (例: `{ wave: true, sf2: true }`)。
 
-読み込まれていないエンジンは使いません。波形テーブル / SoundFont を読み込まずに
-`soundQuality` 1 や 4 を選んだ場合、あるいはそのエンジンを含まないビルドでは、
+読み込まれていないエンジンは使いません。シンセエンジンを含まないビルドで
+`soundQuality` 1 を選んだ場合、または SoundFont を読み込まずに 4 を選んだ場合は、
 無音ではなく basic 波形エンジンで発音します。SF2 エンジンを含まないビルドでは
-`loadSF2()` が `false` を返し、`loadSamples()` は何もしない (廃止) 関数です。
+`loadSF2()` が `false` を返します。`loadWaves()` / `loadWavetable()` と
+旧 `soundQuality: -1` は警告付きの廃止 API です。
 
-`wave-nodefault` ビルドは波形テーブルを一切内蔵していないため、波形テーブルモードを
-使う場合は `picoAudio.loadWaves(buffer)` で自前のテーブルを渡してください。
-それまでは `soundQuality: 1` は basic エンジンで発音します。
+## License
+Code released under the MIT License
 
 ## Credits
 

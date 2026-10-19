@@ -1,4 +1,8 @@
-import { findClosestNumberIndex } from "./periodic-wave-man";
+function closestOctave(pitch) {
+    if (pitch <= 45) return 0;
+    if (pitch >= 93) return 4;
+    return Math.round((pitch - 45) / 12);
+}
 
 export default function createBaseNote(option, isBuffer, isExpression, nonChannel, nonStop, needsFilter = false) {
     // 最低限の変数を準備（無音の場合は処理終了するため） //
@@ -62,7 +66,7 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
     } else {
         oscillator.loop = true;
         if (option.channel != 9) {
-            const octave = findClosestNumberIndex(option.pitch);
+            const octave = closestOctave(option.pitch);
             const baseNote = 45 + octave * 12;
             const basePitch = (option.pitch - baseNote) * 100;
 
@@ -294,8 +298,8 @@ export default function createBaseNote(option, isBuffer, isExpression, nonChanne
 
 /**
  * パンの初期値を設定
- * @param {PannerNode | StereoPannerNode} panNode 
- * @param {number} panValue 
+ * @param {PannerNode | StereoPannerNode} panNode
+ * @param {number} panValue
  */
 function initPanValue(context, panNode, panValue) {
     if (context.createStereoPanner) {

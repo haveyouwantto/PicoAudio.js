@@ -1,7 +1,7 @@
 {
   "name": "@maple-kaede/picoaudio",
   "version": "3.0.0",
-  "description": "PicoAudio.js fork: Web Audio MIDI player with basic waveforms, wavetable additive synthesis and SoundFont 2 playback, in selectable builds",
+  "description": "PicoAudio.js fork: Web Audio MIDI player with basic waveforms, hand-programmed GM synth instruments and SoundFont 2 playback, in selectable builds",
   "main": "dist/nodejs/picoaudio.js",
   "module": "dist/nodejs/picoaudio.mjs",
   "publishConfig": {
@@ -15,9 +15,7 @@
     "build": "rollup -c",
     "build:full": "rollup -c --environment PICO_VARIANTS:full",
     "build:sf2": "rollup -c --environment PICO_VARIANTS:sf2",
-    "build:sf2-wave-nodefault": "rollup -c --environment PICO_VARIANTS:sf2-wave-nodefault",
     "build:wave": "rollup -c --environment PICO_VARIANTS:wave",
-    "build:wave-nodefault": "rollup -c --environment PICO_VARIANTS:wave-nodefault",
     "build:basic": "rollup -c --environment PICO_VARIANTS:basic",
     "build:map": "rollup -cm",
     "watch": "rollup -mw -c watch.rollup.config.js",
@@ -42,7 +40,6 @@
     "web-midi-api",
     "soundfont",
     "sf2",
-    "wavetable",
     "additive synthesis",
     "synthesizer"
   ],

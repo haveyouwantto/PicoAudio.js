@@ -10,27 +10,22 @@ const babelParam = {
  * Build variants.
  *
  * Every variant bundles the same sources; only src/features.js differs, which
- * makes the excluded engines unreachable and lets rollup drop both their code
- * and the embedded wave table.
+ * makes the excluded engines unreachable and lets rollup drop their code.
  *
  *   basic                soundQuality 0 only (upstream PicoAudio feature set)
- *   wave                 + soundQuality 1 (periodic wave / wavetable mode)
- *   wave-nodefault       + the above, without the built in default wave table
+ *   wave                 + soundQuality 1 (hand-programmed synth instruments)
  *   sf2                  + soundQuality 4 (SoundFont 2)
- *   sf2-wave-nodefault   + wavetable + SF2, without the default wave table
- *   full                 + wavetable + SF2, with the default wave table
+ *   full                 + synth instruments + SF2
  *
  * The full build keeps the historical file names (dist/.../picoaudio.mjs and
  * friends); the others get a suffix: `rollup -c` builds all of them,
  * `rollup -c --environment PICO_VARIANTS:basic` builds one.
  */
 const VARIANTS = {
-  full: { suffix: '', wave: true, sf2: true, defaultWave: true },
-  'sf2-wave-nodefault': { suffix: '.sf2-wave-nodefault', wave: true, sf2: true, defaultWave: false },
-  sf2: { suffix: '.sf2', wave: false, sf2: true, defaultWave: false },
-  wave: { suffix: '.wave', wave: true, sf2: false, defaultWave: true },
-  'wave-nodefault': { suffix: '.wave-nodefault', wave: true, sf2: false, defaultWave: false },
-  basic: { suffix: '.basic', wave: false, sf2: false, defaultWave: false },
+  full: { suffix: '', wave: true, sf2: true },
+  sf2: { suffix: '.sf2', wave: false, sf2: true },
+  wave: { suffix: '.wave', wave: true, sf2: false },
+  basic: { suffix: '.basic', wave: false, sf2: false },
 };
 
 const selected = (process.env.PICO_VARIANTS || Object.keys(VARIANTS).join(','))
@@ -53,11 +48,14 @@ function features(flags) {
       return [
         `export const HAS_WAVE = ${flags.wave};`,
         `export const HAS_SF2 = ${flags.sf2};`,
-        `export const HAS_DEFAULT_WAVE = ${flags.defaultWave};`,
       ].join('\n');
     },
   };
 }
+
+const treeshake = {
+  moduleSideEffects: (id) => !id.replace(/\\/g, '/').endsWith('/src/player/sound-source/synth-instruments.js'),
+};
 
 export default selected.map((name) => {
   const flags = VARIANTS[name];
@@ -65,6 +63,7 @@ export default selected.map((name) => {
   return [
     {
       input: 'src/main.js',
+      treeshake,
       output: {
         file: `dist/browser/PicoAudio${suffix}.js`,
         format: 'iife',
@@ -77,6 +76,7 @@ export default selected.map((name) => {
     },
     {
       input: 'src/main.js',
+      treeshake,
       output: {
         file: `dist/browser/PicoAudio${suffix}.min.js`,
         format: 'iife',
@@ -90,6 +90,7 @@ export default selected.map((name) => {
     },
     {
       input: 'src/main.js',
+      treeshake,
       output: [
         {
           file: `dist/nodejs/picoaudio${suffix}.js`,

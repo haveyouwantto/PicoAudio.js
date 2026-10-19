@@ -20,7 +20,6 @@ import getTiming from './player/time/get-timing.js';
 import parseSMF from './smf/parse-smf.js';
 
 import startWebMIDI from './web-midi/start-web-midi.js';
-import { loadWaves } from './player/sound-source/periodic-wave-man.js';
 import { loadSF2, isSF2Loaded } from './player/sound-source/sf2-provider.js';
 import { prepareSF2Worklet, pushSF2WorkletFont, isSF2WorkletReady } from './player/sound-source/sf2-worklet-renderer.js';
 import { HAS_SF2, HAS_WAVE } from './features.js';
@@ -255,9 +254,9 @@ class PicoAudio {
         console.warn("setGlobalReverb() is deprecated");
     }
 
-    loadWaves(buffer) {
-        if (!HAS_WAVE) return;
-        loadWaves(buffer)
+    /** @deprecated soundQuality 1 now uses the built-in synth instruments. */
+    loadWaves() {
+        console.warn('PicoAudio: loadWaves() is deprecated; soundQuality 1 uses the built-in synth instruments');
     }
 
     loadSamples(buffer) {
@@ -303,7 +302,7 @@ class PicoAudio {
         if (!HAS_SF2) return false;
         return isSF2Loaded();
     }
-    
+
     getDuration() {
         return this.playData?.lastEventTime ?? 0;
     }
