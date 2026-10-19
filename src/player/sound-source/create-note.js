@@ -3,8 +3,16 @@ import { getWave, getWaveTable, quickfadeArray, findClosestNumberIndex, getVolum
 import { renderSF2Note } from "./sf2-renderer";
 import { HAS_SF2, HAS_WAVE } from "../../features.js";
 import { resolveSoundQuality } from "../sound-quality.js";
+import createSynthInstrumentNote, { hasSynthInstrument } from "./synth-instruments";
 
 export default function createNote(option) {
+    // Sound quality 1 patches do not need a wavetable, so check them before
+    // resolveSoundQuality() falls back to the basic engine when none is loaded.
+    if (HAS_WAVE && !option.forceWavetable && this.settings.soundQuality == 1
+        && hasSynthInstrument(option.instrument)) {
+        return createSynthInstrumentNote.call(this, option);
+    }
+
     const quality = resolveSoundQuality(this.settings);
     // SF2 SoundFont mode: the renderer builds its own complete audio graph
     // (zone/layer selection, envelope, filters, LFOs), so we bypass
