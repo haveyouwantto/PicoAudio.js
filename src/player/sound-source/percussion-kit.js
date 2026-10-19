@@ -293,34 +293,39 @@ const RECIPES = {};
 function kick(p) {
     return function (k, v) {
         const path = [[0, p.f[0] * (0.78 + 0.22 * v.vel)], [0.012, p.f[1]], [p.sweep, p.f[2]]];
-        k.tone({ path: path, level: 1, atk: 0.0012, decay: [[0, 0.5, 0.025], [0.05, 0, p.tail]] });
+        // hold the low body for ~40ms before the tail, otherwise the 50Hz
+        // fundamental never gets a full cycle and the kick reads as a click.
+        k.tone({ path: path, level: 1, atk: 0.0012, decay: [[0.04, 0.85, 0.02], [0.055, 0, p.tail]] });
         // triangle copy: upper harmonics so the kick still reads on small speakers
-        k.tone({ type: "triangle", path: path, level: 0.22, atk: 0.001, decay: 0.04,
+        k.tone({ type: "triangle", path: path, level: 0.45, atk: 0.001, decay: 0.04,
             filt: [{ t: "lowpass", f: 900, q: 0.7 }] });
         // beater click
-        k.noise({ filt: [{ t: "bandpass", f: p.click * v.br, q: 0.9 }, { t: "lowpass", f: 8000 }],
-            level: 0.3 * v.soft, atk: 0.0004, decay: 0.006 });
+        k.noise({ filt: [{ t: "bandpass", f: p.click * v.br, q: 1.0 }, { t: "lowpass", f: 8000 }],
+            level: 0.7 * v.soft, atk: 0.0004, decay: 0.0035 });
+        // low, short noise body (the old kick had this under the beater click)
+        k.noise({ rate: 0.25, filt: [{ t: "lowpass", f: 12000, to: 1000, tau: 0.003, q: 0.7 }],
+            level: 0.45 * v.soft, atk: 0.004, decay: 0.004 });
     };
 }
-RECIPES[36] = kick({ f: [175, 95, 52], sweep: 0.14, tail: 0.075, click: 3000 });
+RECIPES[36] = kick({ f: [175, 95, 52], sweep: 0.07, tail: 0.04, click: 3000 });
 RECIPES[35] = kick({ f: [150, 88, 56], sweep: 0.18, tail: 0.095, click: 2000 });
 
 function snare(p) {
     return function (k, v) {
         // shell: fundamental + second mode, quick pitch drop at the strike
-        k.tone({ path: [[0, p.f * 1.35], [0.012, p.f]], level: 0.85, atk: 0.0015,
-            decay: [[0, 0.35, 0.012], [0.03, 0, p.shell]] });
+        k.tone({ path: [[0, p.f * 1.35], [0.012, p.f]], level: 1.0, atk: 0.0015,
+            decay: [[0, 0.55, 0.012], [0.03, 0, p.shell]] });
         k.tone({ f: p.f * 1.72, level: 0.3, atk: 0.0015, decay: p.shell * 0.6 });
         // snare wires (the burst is deliberately not much louder than the body: keeps the crest factor sane)
         k.noise({ filt: [{ t: "highpass", f: p.hp * v.br, q: 0.7 },
             { t: "peaking", f: p.pk, q: 0.9, g: 4 }, { t: "lowpass", f: 7500 + 4500 * v.vel, q: 0.6 }],
             level: 0.85 * (0.55 + 0.45 * v.vel), atk: 0.0012, decay: [[0, 0.6, 0.012], [0.03, 0, p.wire]] });
         // stick, slightly after the wires start so the two transients don't stack
-        k.noise({ filt: [{ t: "bandpass", f: 3800, q: 1.1 }], level: 0.16 * v.soft, delay: 0.0006, atk: 0.0004, decay: 0.004 });
+        k.noise({ filt: [{ t: "bandpass", f: 3800, q: 1.1 }], level: 0.24 * v.soft, delay: 0.0006, atk: 0.0004, decay: 0.003 });
     };
 }
-RECIPES[38] = snare({ f: 188, shell: 0.035, hp: 1300, pk: 4800, wire: 0.05 });
-RECIPES[40] = snare({ f: 208, shell: 0.03, hp: 1900, pk: 6200, wire: 0.04 });
+RECIPES[38] = snare({ f: 188, shell: 0.045, hp: 1300, pk: 4800, wire: 0.05 });
+RECIPES[40] = snare({ f: 208, shell: 0.04, hp: 1900, pk: 6200, wire: 0.04 });
 
 RECIPES[37] = function (k, v) {  // side stick
     k.tone({ path: [[0, 420], [0.006, 300]], level: 0.8, atk: 0.0005, decay: [[0, 0.2, 0.006], [0.012, 0, 0.02]] });
@@ -340,7 +345,8 @@ function tom(f0, tau) {
         k.tone({ path: [[0, hi], [0.055, f0]], level: 1, atk: 0.0015, decay: [[0, 0.6, 0.03], [0.06, 0, tau]] });
         k.tone({ path: [[0, hi * 1.59], [0.055, f0 * 1.59]], level: 0.22, atk: 0.001, decay: tau * 0.5 });
         k.noise({ filt: [{ t: "bandpass", f: 2600 * v.br, q: 0.9 }], level: 0.22 * v.soft, atk: 0.0004, decay: 0.006 });
-        k.noise({ filt: [{ t: "lowpass", f: 700, q: 0.7 }], level: 0.15, atk: 0.001, decay: 0.03 });
+        // slowed white noise gives the tom its skin/attack noise
+        k.noise({ rate: 0.4, filt: [{ t: "lowpass", f: 1200, q: 0.7 }], level: 0.7 * v.soft, atk: 0.001, decay: 0.006 });
     };
 }
 RECIPES[41] = tom(82, 0.085);
