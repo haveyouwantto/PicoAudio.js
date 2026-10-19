@@ -29,10 +29,10 @@
  */
 
 const TRIM_DB = {
-    0: +1.0, 1: +2.8, 2: +0.7, 3: +1.2, 4: +0.7, 5: +0.2, 6: +3.9, 7: +2.1,
-    8: -0.9, 9: -0.9, 10: -0.6, 11: -0.9, 12: 0, 13: +0.7, 14: -1.6, 15: +2.4,
-    16: +0.5, 17: -0.2, 18: +1.0, 19: +0.8, 20: -0.3, 21: -1.2, 22: -1.2, 23: -1.4,
-    24: -0.2, 25: +2.6, 26: -1.3, 27: +1.7, 28: +1.9, 29: +5.0, 30: +4.4, 31: -0.6,
+    0: +3.0, 1: +3.2, 2: +3.4, 3: +1.4, 4: +7.4, 5: +7.3, 6: +6.0, 7: +3.3,
+    8: +4.2, 9: +3.9, 10: +5.3, 11: +4.6, 12: +6.9, 13: +9.5, 14: +1.9, 15: +3.1,
+    16: +2.5, 17: +2.5, 18: -3.7, 19: +1.4, 20: +0.1, 21: -2.0, 22: +0.7, 23: -2.6,
+    24: +3.1, 25: +4.2, 26: +2.1, 27: +3.3, 28: +7.5, 29: -1.2, 30: -2.2, 31: +5.7,
 };
 
 /* ------------------------------------------------------------------ */
@@ -76,7 +76,10 @@ function getPeriodic(ctx, design, pitch) {
     if (m[key]) return m[key];
     const bp = band * 12 + 6;
     const fLow = 440 * Math.pow(2, (band * 12 - 69) / 12);
-    const N = clamp(Math.floor(Math.min(ctx.sampleRate * 0.45, 18000) / Math.max(fLow, 8)), 8, design.maxN || 160);
+    // Keep partials below 12 kHz, like the reference synth's anti-harshness
+    // limit. Above that most GM patches only add aliasing/sheen.
+    const maxHz = design.maxHz || 12000;
+    const N = clamp(Math.floor(Math.min(ctx.sampleRate * 0.45, maxHz) / Math.max(fLow, 8)), 8, design.maxN || 160);
     const real = new Float32Array(N + 1), imag = new Float32Array(N + 1);
     const amps = new Float32Array(N + 1);
     for (let n = 1; n <= N; n++) {
@@ -214,13 +217,14 @@ function piano(o) {
         b.part({ wave: w, cents: o.dA, level: 1.0, decay: 0.75 * Kd });
         b.part({ wave: w, cents: o.dB, level: o.bLevel || 0.5, decay: 3.4 * Kd });
         if (o.dC != null) b.part({ wave: w, cents: o.dC, level: 0.4, decay: 1.6 * Kd });
-        b.filt({ type: "lowpass", f0: clamp(f * (o.bright * (3.2 + 15 * Math.pow(vel, 1.3))), 900, 16000),
-            f1: clamp(f * (2 + 3 * vel), 500, 8000), tau: 0.5 * Kd, q: 0.7 });
+        b.filt({ type: "lowpass", f0: clamp(f * (o.bright * (2.6 + 11 * Math.pow(vel, 1.3))), 900, 12000),
+            f1: clamp(f * (1.8 + 2.2 * vel), 500, 6000), tau: 0.5 * Kd, q: 0.7 });
         // hammer: a short broadband knock, harder = brighter and louder
         b.noise({ level: (o.hammer || 1) * (0.05 + 0.13 * vel), atk: 0.0005, decay: 0.012,
             filt: { t: "bandpass", f: clamp(f * 5, 1500, 6500), q: 0.8 } });
         if (o.tine) b.part({ wave: "sine", ratio: o.tine, level: 0.05 + 0.1 * vel, decay: 0.35 });
         b.eq({ t: "peaking", f: 2800, q: 0.8, g: o.presence || 1.5 });
+        b.eq({ t: "highshelf", f: 5000, q: 0.7, g: -3.5 });
     };
 }
 PATCHES[0] = piano({ comb: 1 / 8, expo: 1.05, dA: -0.8, dB: 1.1, bright: 1 });
@@ -424,18 +428,18 @@ PATCHES[31] = function (b, c) {   // natural harmonics: almost pure, bell-like
 
 Object.assign(TRIM_DB, {
     // Measured C4 velocity-100 RMS, target 0.019; capped at +/-12 dB.
-    32: -3.2, 33: -2.2, 34: -1.1, 35: -2.8, 36: +0.2, 37: +0.7, 38: +0.0, 39: +1.7,
-    40: -0.2, 41: -0.9, 42: -0.3, 43: -2.4, 44: +2.6, 45: -3.3, 46: -4.3, 47: -2.8,
-    48: +2.8, 49: +3.2, 50: +3.7, 51: +3.4, 52: +2.3, 53: -0.5, 54: +0.2, 55: +6.8,
-    56: +1.2, 57: -1.1, 58: -3.0, 59: -1.4, 60: -2.8, 61: +3.5, 62: +2.4, 63: +1.8,
-    64: +1.1, 65: +0.1, 66: -0.7, 67: -2.7, 68: +1.3, 69: +1.1, 70: -1.9, 71: -0.9,
-    72: -3.2, 73: -3.6, 74: -4.3, 75: -3.4, 76: -3.6, 77: -2.2, 78: -4.2, 79: -4.2,
-    80: -2.5, 81: +2.6, 82: -1.2, 83: +0.9, 84: +3.4, 85: +1.8, 86: +2.4, 87: +1.8,
-    88: -0.1, 89: +3.8, 90: +3.7, 91: +1.5, 92: +0.0, 93: -0.8, 94: +0.5, 95: -0.6,
-    96: +1.0, 97: +2.5, 98: -0.1, 99: +2.5, 100: +3.1, 101: +2.0, 102: +1.7, 103: -8.4,
-    104: +2.9, 105: +5.3, 106: +7.6, 107: -0.3, 108: -3.1, 109: +2.8, 110: +0.0, 111: +2.8,
-    112: -2.3, 113: -1.2, 114: -1.0, 115: +2.2, 116: -2.1, 117: -1.5, 118: -0.3, 119: +2.6,
-    120: +3.2, 121: +1.8, 122: +5.0, 123: +0.5, 124: +0.7, 125: +5.5, 126: +3.0, 127: +1.9,
+    32: +3.8, 33: +3.5, 34: +5.3, 35: +2.1, 36: +7.3, 37: +6.3, 38: +2.1, 39: -1.8,
+    40: +2.0, 41: +2.2, 42: +2.3, 43: +2.2, 44: +5.7, 45: +7.9, 46: +1.2, 47: +2.6,
+    48: +4.6, 49: +4.2, 50: +6.3, 51: +4.9, 52: +3.8, 53: +4.1, 54: +3.0, 55: +3.0,
+    56: +1.8, 57: +1.6, 58: +2.2, 59: -0.7, 60: +2.2, 61: +2.3, 62: +2.7, 63: +2.0,
+    64: +2.2, 65: +2.2, 66: +2.2, 67: +2.2, 68: +1.3, 69: +2.3, 70: +2.2, 71: +2.2,
+    72: +2.2, 73: +2.2, 74: +2.1, 75: +2.2, 76: +2.3, 77: +2.2, 78: +2.2, 79: +2.2,
+    80: -1.9, 81: +1.8, 82: +2.1, 83: +3.5, 84: -3.2, 85: +2.1, 86: +3.3, 87: +0.3,
+    88: +5.8, 89: +3.5, 90: +3.5, 91: +3.7, 92: +3.8, 93: +2.6, 94: +2.4, 95: -0.8,
+    96: +6.7, 97: +2.1, 98: +4.2, 99: +5.2, 100: +4.2, 101: +3.6, 102: +6.5, 103: -5.5,
+    104: -2.7, 105: +7.3, 106: +8.7, 107: +3.8, 108: +4.9, 109: +0.1, 110: +1.7, 111: +0.6,
+    112: +3.7, 113: +7.7, 114: +4.5, 115: +12.0, 116: +9.1, 117: +8.4, 118: +12.0, 119: +12.0,
+    120: +12.0, 121: +12.0, 122: +12.0, 123: +6.0, 124: +6.3, 125: +12.0, 126: +12.0, 127: +12.0,
 });
 
 /** resonance-shaped spectrum: n^-expo * (1 + sum of gaussian bumps [Hz, width, boost]); `even` scales even harmonics */
@@ -518,6 +522,8 @@ function sustained(o) {
             filt: { t: "highpass", f: clamp(f * 2, 1500, 8000), q: 0.7 } });
         if (o.chiff) b.noise({ level: o.chiff.level * (0.4 + 0.6 * vel), atk: 0.002, decay: o.chiff.decay,
             filt: { t: "bandpass", f: clamp(f * (o.chiff.fr || 3), 400, 9000), q: o.chiff.q || 1 } });
+        if (o.hf !== 0) b.eq({ t: "highshelf", f: o.hfFreq || 6500, q: 0.7,
+            g: o.hf == null ? -2.5 : o.hf });
         (o.eq || []).forEach(function (e) { b.eq(e); });
         b.lfo({ rate: o.rate || 5.5, vib: o.vib || 0, vibDelay: o.vibDelay != null ? o.vibDelay : 0.3, trem: o.trem || 0 });
     };
@@ -569,18 +575,20 @@ PATCHES[39] = synth({ osc: [["sawtooth", 1, -7, 0.8], ["sawtooth", 1, 7, 0.8], [
 /* ---- strings (40-47) ----------------------------------------------- */
 PATCHES[40] = sustained({ wave: W.violin, atk: 0.08, rel: 0.18, b0: 10, bv: 8, fmin: 2500, fmax: 12000,
     breath: { level: 0.025, fr: 3, q: 0.7, min: 1500 }, chiff: { level: 0.06, decay: 0.04, fr: 4, q: 0.8 },
-    vib: 14, rate: 5.6, vibDelay: 0.2, eq: [{ t: "peaking", f: 2800, q: 1, g: 2 }] });
+    vib: 14, rate: 5.6, vibDelay: 0.2, hf: -4.5, hfFreq: 4000,
+    eq: [{ t: "peaking", f: 2800, q: 1, g: 2 }] });
 PATCHES[41] = sustained({ wave: W.viola, atk: 0.09, rel: 0.2, b0: 9, bv: 7, fmin: 2000, fmax: 10000,
     breath: { level: 0.025, fr: 3, q: 0.7, min: 1200 }, chiff: { level: 0.05, decay: 0.045, fr: 4, q: 0.8 },
-    vib: 12, rate: 5.3, vibDelay: 0.2 });
+    vib: 12, rate: 5.3, vibDelay: 0.2, hf: -4.5, hfFreq: 4000 });
 PATCHES[42] = sustained({ wave: W.cello, atk: 0.1, rel: 0.22, b0: 9, bv: 6, fmin: 1500, fmax: 8000,
     breath: { level: 0.025, fr: 3, q: 0.7, min: 800 }, chiff: { level: 0.05, decay: 0.05, fr: 4, q: 0.8 },
-    vib: 12, rate: 5, vibDelay: 0.25 });
+    vib: 12, rate: 5, vibDelay: 0.25, hf: -4, hfFreq: 3500 });
 PATCHES[43] = sustained({ wave: W.cbass, atk: 0.12, rel: 0.25, b0: 8, bv: 5, fmin: 800, fmax: 5000,
     breath: { level: 0.02, fr: 3, q: 0.7, min: 500 }, chiff: { level: 0.05, decay: 0.06, fr: 4, q: 0.8 },
-    vib: 8, rate: 4.8, vibDelay: 0.3, eq: [{ t: "lowshelf", f: 120, q: 0.7, g: 3 }] });
+    vib: 8, rate: 4.8, vibDelay: 0.3, hf: -3.5, hfFreq: 3000,
+    eq: [{ t: "lowshelf", f: 120, q: 0.7, g: 3 }] });
 PATCHES[44] = sustained({ wave: W.violin, n: 3, det: 8, atk: 0.05, rel: 0.2, b0: 9, bv: 6, fmin: 2000, fmax: 10000,
-    breath: { level: 0.03, fr: 3, min: 1500 }, rate: 7.5, trem: 0.75 });                                       // tremolo strings
+    breath: { level: 0.03, fr: 3, min: 1500 }, rate: 7.5, trem: 0.75, hf: -4.5, hfFreq: 4000 });              // tremolo strings
 PATCHES[45] = function (b, c) {   // pizzicato
     const p = c.p, f = c.f, vel = c.vel;
     const Kd = clamp(K(p, 60, 24), 0.3, 2.5);
@@ -606,10 +614,12 @@ PATCHES[47] = barVoice({ ratios: [1, 1.5, 1.98, 2.44, 2.95], levels: [1, 0.6, 0.
     noise: { level: 0.2, decay: 0.03, fr: 2, t: "lowpass", q: 0.7 } });                                       // timpani: membrane modes
 
 /* ---- ensemble (48-55) ---------------------------------------------- */
-PATCHES[48] = sustained({ wave: W.violin, n: 4, det: 9, stagger: 0.025, atk: 0.14, rel: 0.35, b0: 8, bv: 6, fmin: 2000, fmax: 10000,
-    breath: { level: 0.015, fr: 3, min: 1500 }, vib: 8, rate: 5.3, vibDelay: 0.15, eq: [{ t: "lowshelf", f: 200, q: 0.7, g: 2 }] });
-PATCHES[49] = sustained({ wave: W.violin, n: 4, det: 11, stagger: 0.05, atk: 0.4, rel: 0.5, b0: 6, bv: 4, fmin: 1800, fmax: 8000,
-    breath: { level: 0.012, fr: 3, min: 1500 }, vib: 7, rate: 5, vibDelay: 0.3, eq: [{ t: "lowshelf", f: 200, q: 0.7, g: 2 }] });
+PATCHES[48] = sustained({ wave: W.violin, n: 4, det: 9, stagger: 0.025, atk: 0.14, rel: 0.35, b0: 6.5, bv: 4.5, fmin: 1800, fmax: 8000,
+    breath: { level: 0.015, fr: 3, min: 1500 }, vib: 8, rate: 5.3, vibDelay: 0.15, hf: -6, hfFreq: 3500,
+    eq: [{ t: "lowshelf", f: 200, q: 0.7, g: 2 }] });
+PATCHES[49] = sustained({ wave: W.violin, n: 4, det: 11, stagger: 0.05, atk: 0.4, rel: 0.5, b0: 5, bv: 3.5, fmin: 1600, fmax: 6500,
+    breath: { level: 0.012, fr: 3, min: 1500 }, vib: 7, rate: 5, vibDelay: 0.3, hf: -5.5, hfFreq: 3500,
+    eq: [{ t: "lowshelf", f: 200, q: 0.7, g: 2 }] });
 PATCHES[50] = sustained({ wave: "sawtooth", n: 3, det: 12, atk: 0.12, rel: 0.35, b0: 6, bv: 4, fmin: 1500, fmax: 9000, vib: 4, rate: 5, vibDelay: 0 });
 PATCHES[51] = sustained({ wave: "sawtooth", n: 2, det: 15, atk: 0.35, rel: 0.5, b0: 4, bv: 3, fmin: 1000, fmax: 6000,
     extra: [{ wave: "triangle", level: 0.6 }], vib: 3, rate: 4.5, vibDelay: 0 });
@@ -635,18 +645,21 @@ PATCHES[55] = function (b, c) {   // orchestra hit: brass + strings stack with a
 // the delayed sawtooth "extra" lets the upper harmonics bloom after the fundamental, as in a real brass attack
 PATCHES[56] = sustained({ wave: W.trumpet, atk: 0.035, rel: 0.08, b0: 7, bv: 10, fmin: 1500, fmax: 12000,
     chiff: { level: 0.08, decay: 0.025, fr: 3, q: 0.8 }, breath: { level: 0.012, fr: 4, min: 1500 },
-    vib: 9, rate: 5.5, vibDelay: 0.35, extra: [{ wave: "sawtooth", level: 0.25, atk: 0.06 }] });
+    vib: 9, rate: 5.5, vibDelay: 0.35, hf: -4.5, hfFreq: 4000,
+    extra: [{ wave: "sawtooth", level: 0.25, atk: 0.06 }] });
 PATCHES[57] = sustained({ wave: W.trombone, atk: 0.05, rel: 0.1, b0: 5, bv: 8, fmin: 900, fmax: 9000,
-    chiff: { level: 0.06, decay: 0.03, fr: 3, q: 0.8 }, vib: 6, rate: 5, vibDelay: 0.4, extra: [{ wave: "sawtooth", level: 0.2, atk: 0.08 }] });
+    chiff: { level: 0.06, decay: 0.03, fr: 3, q: 0.8 }, vib: 6, rate: 5, vibDelay: 0.4, hf: -4, hfFreq: 3500,
+    extra: [{ wave: "sawtooth", level: 0.2, atk: 0.08 }] });
 PATCHES[58] = sustained({ wave: W.tuba, atk: 0.06, rel: 0.12, b0: 3.5, bv: 5, fmin: 500, fmax: 5000,
-    chiff: { level: 0.05, decay: 0.04, fr: 2, q: 0.8 }, vib: 4, rate: 4.8, vibDelay: 0.4 });
+    chiff: { level: 0.05, decay: 0.04, fr: 2, q: 0.8 }, vib: 4, rate: 4.8, vibDelay: 0.4, hf: -3.5, hfFreq: 3000 });
 PATCHES[59] = sustained({ wave: W.mute, atk: 0.03, rel: 0.07, b0: 10, bv: 6, fmin: 2000, fmax: 10000,
-    chiff: { level: 0.05, decay: 0.02, fr: 4 }, vib: 8, rate: 5.5, vibDelay: 0.3,
+    chiff: { level: 0.05, decay: 0.02, fr: 4 }, vib: 8, rate: 5.5, vibDelay: 0.3, hf: -4, hfFreq: 4500,
     eq: [{ t: "highpass", f: 450, q: 0.7 }, { t: "peaking", f: 1700, q: 2, g: 6 }] });
 PATCHES[60] = sustained({ wave: W.horn, atk: 0.07, rel: 0.15, b0: 4, bv: 5, fmin: 800, fmax: 6000,
-    chiff: { level: 0.04, decay: 0.04, fr: 2 }, vib: 5, rate: 5, vibDelay: 0.4 });
+    chiff: { level: 0.04, decay: 0.04, fr: 2 }, vib: 5, rate: 5, vibDelay: 0.4, hf: -4, hfFreq: 3500 });
 PATCHES[61] = sustained({ wave: W.trumpet, n: 3, det: 8, stagger: 0.015, atk: 0.04, rel: 0.12, b0: 6, bv: 9, fmin: 1500, fmax: 11000,
-    chiff: { level: 0.06, decay: 0.03, fr: 3 }, vib: 5, rate: 5.3, vibDelay: 0.35, extra: [{ wave: "sawtooth", level: 0.2, atk: 0.07 }] });
+    chiff: { level: 0.06, decay: 0.03, fr: 3 }, vib: 5, rate: 5.3, vibDelay: 0.35, hf: -4, hfFreq: 4000,
+    extra: [{ wave: "sawtooth", level: 0.2, atk: 0.07 }] });
 PATCHES[62] = synth({ osc: [["sawtooth", 1, -6, 1], ["sawtooth", 1, 6, 1]], atk: 0.02, rel: 0.15, f0: 14, f0v: 10, f1: 4, ftau: 0.25, q: 2,
     decay: [[0, 0.85, 0.3]], lfo: { rate: 5, vib: 4, vibDelay: 0.3 } });
 PATCHES[63] = synth({ osc: [["sawtooth", 1, -4, 1], ["square", 1, 5, 0.6]], atk: 0.06, rel: 0.2, f0: 8, f0v: 6, f1: 3, ftau: 0.4, q: 1.5,
@@ -964,9 +977,9 @@ export default function createSynthInstrumentNote(option) {
 
     /* ---- master envelope (gate) on the base note's gain node ---- */
     const m = spec.master;
-    // Match the average RMS of the existing wavetable path so switching
-    // between program 31 and 32 does not jump in level.
-    const peakLevel = this.settings.instrumentAttenuation * 0.5 * dbToGain(TRIM_DB[program] || 0) * (m.lvl != null ? m.lvl : 1);
+    // Match the melodic bus level; the per-program TRIM_DB values carry the
+    // remaining balance differences.
+    const peakLevel = this.settings.instrumentAttenuation * 1.0 * dbToGain(TRIM_DB[program] || 0) * (m.lvl != null ? m.lvl : 1);
     const gp = note.gainNode.gain;
     const atk = Math.max(m.atk, 0.001);
     const mStages = toStages(m.decay);
@@ -1141,6 +1154,12 @@ export default function createSynthInstrumentNote(option) {
         osc.frequency.value = Math.min(fr, nyq);
         tuneOsc(osc, s.cents || 0);
         const g = ctx.createGain();
+        // createBaseNote already connected its oscillator straight to panNode.
+        // When that oscillator becomes the longest part, remove the dry path;
+        // otherwise it bypasses the part envelope and rings until note-off.
+        if (idx === longest) {
+            try { osc.disconnect(note.panNode); } catch (err) { /* noop */ }
+        }
         osc.connect(g);
         g.connect(bus);
         const lvl = (s.level != null ? s.level : 1) * wgain;
