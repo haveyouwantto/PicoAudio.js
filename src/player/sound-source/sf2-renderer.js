@@ -142,8 +142,13 @@ function getStreamScratch(frames) {
  *
  * Buffers belong to the AudioContext that created them, so the pool is dropped
  * wholesale when a different context shows up.
+ *
+ * The cap is sized for the peak, not the average: a dense song keeps ~200
+ * chunk sources playing at once, and anything the pool cannot serve is a fresh
+ * allocation (and its garbage). With one size class and 16 MB the engine
+ * allocates during the first seconds of a song and then recycles.
  */
-const CHUNK_POOL_MAX_BYTES = 8 * 1024 * 1024;
+const CHUNK_POOL_MAX_BYTES = 16 * 1024 * 1024;
 const chunkPool = new Map();
 let chunkPoolContext = null;
 let chunkPoolBytes = 0;
@@ -325,14 +330,29 @@ export function renderSF2Note(option) {
             ? scratch
             : renderer.buffer.subarray(first * 2, (first + written) * 2);
 
+        // Every streaming chunk is a full length buffer, even the one that ends
+        // a note. A 0.25 s chunk is always the same size; a note's last chunk is
+        // a random shorter one, and since the free list is keyed by length those
+        // tails both missed it and filled it with buffers nothing could use. So
+        // the pool never served anything: test_samples/browser/soak.mjs measured
+        // 120-170 KB of AudioBuffer allocated per note (4 GB per 10 minutes of a
+        // dense song) with 36 distinct chunk lengths. Rounding the tails up puts
+        // the whole engine on one size class - the same song now allocates 14 KB
+        // per note, all of it while the pool is still filling. The extra frames
+        // are silence.
         const buffer = streaming
-            ? takeChunkBuffer(context, written, sampleRate)
+            ? takeChunkBuffer(context, chunkFrames, sampleRate)
             : context.createBuffer(2, written, sampleRate);
         const left = buffer.getChannelData(0);
         const right = buffer.getChannelData(1);
         for (let i = 0, j = 0; i < written; i++) {
             left[i] = data[j++];
             right[i] = data[j++];
+        }
+        if (streaming && written < chunkFrames) {
+            // the reused buffer still holds the previous chunk's samples
+            left.fill(0, written);
+            right.fill(0, written);
         }
 
         const source = context.createBufferSource();
@@ -344,10 +364,10 @@ export function renderSF2Note(option) {
         // buffer goes back into the pool here, once nothing plays it any more.
         const isLastChunk = renderer.isDone();
         source.onended = () => {
-            try {
-                source.disconnect();
-                source.buffer = null;
-            } catch (e) { /* noop */ }
+            // disconnect() takes the source out of the graph, which is what
+            // frees it (and its buffer). Assigning null to source.buffer is not
+            // supported by Chrome and warns once per chunk.
+            try { source.disconnect(); } catch (e) { /* noop */ }
             if (streaming) releaseChunkBuffer(buffer);
             if (isLastChunk && !stopped) {
                 releaseGraph();
