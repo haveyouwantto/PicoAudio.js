@@ -28,16 +28,41 @@ import { renderSF2NoteWorklet } from "./sf2-worklet-renderer.js";
 /** Hard cap on the release tail that is rendered past the note-off. */
 const SF2_MAX_TAIL_SECONDS = 30;
 
-/** Streaming: chunk length, how much is pre-rendered, and how far ahead we keep the queue. */
-const SF2_STREAM_CHUNK_SECONDS = 1;
+/**
+ * Streaming: chunk length, how much is pre-rendered, and how far ahead we keep
+ * the queue.
+ *
+ * The chunk is deliberately short. Note-on and every catch-up render a whole
+ * number of chunks on the main thread, so the chunk length is the granularity
+ * at which this engine blocks: with 1 s chunks a single strings voice cost
+ * ~0.9 ms per chunk and a 6 note pad started by rendering 3 s each (~25 ms of
+ * main thread, one or two dropped frames). At 0.25 s the same note-on renders
+ * 0.5 s - four times less work per block, and small enough that a render slice
+ * can be stopped between chunks without overrunning the budget.
+ */
+const SF2_STREAM_CHUNK_SECONDS = 0.25;
+/** How much audio is synthesized synchronously at note-on (must cover the note's start time). */
+const SF2_STREAM_LEAD_SECONDS = 0.5;
 // A hidden tab throttles setTimeout (background timers can be delayed by
 // seconds), so keep a bit more audio queued than the pump interval needs.
-const SF2_STREAM_LEAD_CHUNKS = 3;
 const SF2_STREAM_LOOKAHEAD_SECONDS = 2;
 const SF2_STREAM_PUMP_MS = 200;
-const SF2_STREAM_MAX_CHUNKS_PER_PUMP = 4;
-/** When the queue has fallen behind, synthesize this many chunks in one go. */
-const SF2_STREAM_CATCHUP_CHUNKS = 32;
+/**
+ * How long a single top-up may block, in milliseconds. When the budget is spent
+ * the pump yields and re-arms itself instead of rendering the whole backlog in
+ * one burst (the old code rendered up to 32 chunks - 8 seconds of audio - in a
+ * single go exactly when the main thread was already busy).
+ */
+const SF2_STREAM_BUDGET_MS = 4;
+/**
+ * Minimum gap between two top-ups, shared by every streaming note. Without it a
+ * chord of N long notes puts N note-on top-ups back to back in the same task and
+ * the per-note budget adds up to N x 4 ms.
+ */
+const SF2_STREAM_SLICE_GAP_MS = 3;
+
+/** Chunks rendered before playback starts (rounded up, at least one). */
+const SF2_STREAM_LEAD_CHUNKS = Math.max(1, Math.ceil(SF2_STREAM_LEAD_SECONDS / SF2_STREAM_CHUNK_SECONDS));
 
 /**
  * Notes that are currently streaming (their remaining audio is still being
@@ -46,6 +71,14 @@ const SF2_STREAM_CATCHUP_CHUNKS = 32;
  * tabs) so playback never runs out of queued audio.
  */
 const activeStreamers = new Set();
+
+/**
+ * Earliest wall-clock time (performance.now()) at which any streamer may render
+ * another slice. Shared by every note so the budget is a global one, not per
+ * note: a chord's note-on fills happen one slice at a time instead of all in the
+ * same task.
+ */
+let pumpNotBefore = 0;
 
 export function flushSF2Streaming() {
     for (const streamer of [...activeStreamers]) streamer.flush();
@@ -278,18 +311,25 @@ export function renderSF2Note(option) {
     const pump = () => {
         timer = null;
         if (stopped) return;
-        const scheduledUntil = start + scheduledFrames / sampleRate;
-        // If the playhead has caught up with the queue (the main thread was
-        // busy, or the tab was throttled) refill it in one bigger burst.
-        let budget = scheduledUntil <= context.currentTime
-            ? SF2_STREAM_CATCHUP_CHUNKS
-            : SF2_STREAM_MAX_CHUNKS_PER_PUMP;
-        while (budget-- > 0 && !renderer.isDone()
-            && start + scheduledFrames / sampleRate < context.currentTime + SF2_STREAM_LOOKAHEAD_SECONDS) {
+        // Other notes may have just topped up. Yield so a chord does not stack
+        // its per-note budgets into one task / one dropped frame.
+        const now = performance.now();
+        if (now < pumpNotBefore) {
+            timer = setTimeout(pump, Math.ceil(pumpNotBefore - now));
+            return;
+        }
+        const deadline = now + SF2_STREAM_BUDGET_MS;
+        while (!renderer.isDone()
+            && start + scheduledFrames / sampleRate < context.currentTime + SF2_STREAM_LOOKAHEAD_SECONDS
+            && performance.now() < deadline) {
             if (!scheduleChunk()) return;
         }
+        pumpNotBefore = performance.now() + SF2_STREAM_SLICE_GAP_MS;
         if (renderer.isDone()) { activeStreamers.delete(streamer); return; }
-        timer = setTimeout(pump, SF2_STREAM_PUMP_MS);
+        // Still short of the lookahead: come back as soon as the slice gap has
+        // passed instead of waiting for the next regular pump.
+        const filled = start + scheduledFrames / sampleRate >= context.currentTime + SF2_STREAM_LOOKAHEAD_SECONDS;
+        timer = setTimeout(pump, filled ? SF2_STREAM_PUMP_MS : 0);
     };
 
     // Registered so a host can finish the note immediately when timers become
@@ -311,7 +351,11 @@ export function renderSF2Note(option) {
         for (let i = 0; i < SF2_STREAM_LEAD_CHUNKS && !renderer.isDone(); i++) {
             if (!scheduleChunk()) break;
         }
-        if (!renderer.isDone()) timer = setTimeout(pump, SF2_STREAM_PUMP_MS);
+        if (!renderer.isDone()) {
+            // Fill up to the lookahead right away, in budgeted slices.
+            pumpNotBefore = performance.now() + SF2_STREAM_SLICE_GAP_MS;
+            timer = setTimeout(pump, 0);
+        }
     } else {
         // Offline rendering: everything must be scheduled before startRendering().
         while (!renderer.isDone()) {
