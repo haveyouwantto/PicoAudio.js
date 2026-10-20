@@ -57,7 +57,6 @@ function createProcessor(tsfSynth, quality) {
             super();
             this.font = null;
             this.notes = [];
-            this.scratch = new Float32Array(256 * 2);
             this.capture = null;
             this.port.onmessage = (event) => this.handleMessage(event.data);
         }
@@ -131,9 +130,12 @@ function createProcessor(tsfSynth, quality) {
                     if (!note.pendingFrames) {
                         const frames = Math.min(tsfSynth.TSF_RENDER_EFFECTSAMPLEBLOCK,
                             note.maxFrames - note.frames);
-                        const got = note.renderer.render(frames, this.scratch);
+                        // Rendered straight into the note's own block buffer -
+                        // render() clears the target first, and this buffer is
+                        // only refreshed once its previous content is used up,
+                        // so the copy through a shared scratch was pure overhead.
+                        const got = note.renderer.render(frames, note.pending);
                         if (!got) break;
-                        note.pending.set(this.scratch.subarray(0, got * 2));
                         note.pendingFrames = got;
                         note.pendingAt = 0;
                     }
@@ -141,14 +143,29 @@ function createProcessor(tsfSynth, quality) {
                     const take = Math.min(note.pendingFrames - note.pendingAt, room);
                     const offset = note.nextFrame - frame0;
                     const gains = note.gains;
-                    for (let f = 0; f < take; f++) {
-                        const frame = note.frames + f;
-                        while (note.gainIndex + 1 < gains.length
-                            && gains[note.gainIndex + 1].frame <= frame) note.gainIndex++;
-                        const gain = gains[note.gainIndex].gain;
-                        const src = (note.pendingAt + f) * 2;
-                        outL[offset + f] += note.pending[src] * gain;
-                        outR[offset + f] += note.pending[src + 1] * gain;
+                    if (gains.length === 1) {
+                        // The common case: the note has no expression curve, so
+                        // its gain is one constant and the per sample lookup of
+                        // the general path is dead weight.
+                        const gain = gains[0].gain;
+                        const at = note.pendingAt * 2;
+                        const pending = note.pending;
+                        for (let f = 0; f < take; f++) {
+                            const src = at + f * 2;
+                            outL[offset + f] += pending[src] * gain;
+                            outR[offset + f] += pending[src + 1] * gain;
+                        }
+                    } else {
+                        const pending = note.pending;
+                        for (let f = 0; f < take; f++) {
+                            const frame = note.frames + f;
+                            while (note.gainIndex + 1 < gains.length
+                                && gains[note.gainIndex + 1].frame <= frame) note.gainIndex++;
+                            const gain = gains[note.gainIndex].gain;
+                            const src = (note.pendingAt + f) * 2;
+                            outL[offset + f] += pending[src] * gain;
+                            outR[offset + f] += pending[src + 1] * gain;
+                        }
                     }
                     note.pendingAt += take;
                     note.frames += take;
@@ -166,7 +183,6 @@ function createProcessor(tsfSynth, quality) {
             const outL = out[0];
             const outR = out[1];
             const block = outL.length;
-            if (this.scratch.length < block * 2) this.scratch = new Float32Array(block * 2);
             const frame0 = currentFrame;
             outL.fill(0);
             outR.fill(0);
