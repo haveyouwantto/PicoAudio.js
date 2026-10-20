@@ -7,6 +7,94 @@ import { flushSF2Streaming } from '../player/sound-source/sf2-renderer.js';
 import { prepareSF2Worklet } from '../player/sound-source/sf2-worklet-renderer.js';
 import { HAS_SF2 } from '../features.js';
 
+/* ------------------------------------------------------------ noise cache -- */
+
+/**
+ * White / pink / cymbal noise tables and the reverb impulse response.
+ *
+ * Together they are 1 s + 1 s + 1 s + 3.5 s of stereo audio, built with a
+ * 65536 point IFFT (miniFFT dominates the profile), which costs ~250 ms of main
+ * thread time. It used to run again for every PicoAudio instance, and the app
+ * creates more than one: the composer loads a font, the WAV export renders in an
+ * OfflineAudioContext, and a player rebuild makes a third.
+ * test_samples/browser/rt-profile.mjs?norender=1 measured init() at 258 ms and
+ * a single 733 ms long task on a page that had not played a note yet.
+ *
+ * The generators are seeded (RandomUtil, except the pink noise which draws from
+ * Math.random once per build), so the result depends only on the sample rate -
+ * that is the cache key. AudioBuffers are plain data containers in Web Audio,
+ * not owned by the context that created them, so one set is shared by every
+ * context with the same rate.
+ */
+const noiseCache = new Map();
+
+function buildNoiseSet(context, sampleRate, sampleRateVT) {
+    // ホワイトノイズ: 仮想サンプルレートで生成してから実レートに変換する
+    // (再生環境のサンプルレートによって音が変わらないように)
+    RandomUtil.resetSeed(); // 乱数パターンを固定にする（Math.random()を使わない）
+    const vtBufs = [];
+    for (let ch = 0; ch < 2; ch++) {
+        const vtBuf = new Float32Array(sampleRateVT);
+        for (let i = 0; i < sampleRateVT; i++) {
+            const r = RandomUtil.random();
+            vtBuf[i] = r * 2 - 1;
+        }
+        vtBufs.push(vtBuf);
+    }
+    const whitenoise = context.createBuffer(2, sampleRate, sampleRate);
+    InterpolationUtil.lerpWave(whitenoise, vtBufs);
+
+    const pinknoise = context.createBuffer(2, sampleRate, sampleRate);
+    AudioUtil.fillAudioBuffer(pinknoise, 0, generatePinkNoise(sampleRate));
+    AudioUtil.fillAudioBuffer(pinknoise, 1, generatePinkNoise(sampleRate));
+
+    const cymbalnoise = context.createBuffer(2, sampleRate, sampleRate);
+    AudioUtil.fillAudioBuffer(cymbalnoise, 0,
+        Waveform.WhiteNoise(sampleRate, 1)
+            .highPass(8000)
+            .norm().samples
+    );
+    AudioUtil.fillAudioBuffer(cymbalnoise, 1,
+        Waveform.WhiteNoise(sampleRate, 1)
+            .highPass(8000)
+            .norm().samples
+    );
+
+    // リバーブ用のインパルス応答音声データ作成（てきとう） //
+    const irLength = Math.round(sampleRate * 3.5);
+    const irLengthVT = Math.round(sampleRateVT * 3.5);
+    RandomUtil.resetSeed(); // 乱数パターンを固定にする（Math.random()を使わない）
+    const irBufs = [];
+    for (let ch = 0; ch < 2; ch++) {
+        const vtBuf = new Float32Array(irLengthVT);
+        for (let i = 0; i < irLengthVT; i++) {
+            const v = ((irLengthVT - i) / irLengthVT);
+            const s = i / sampleRateVT;
+            const d = (s < 0.030 ? 0 : v)
+                * (s >= 0.030 && s < 0.031 ? v * 2 : v)
+                * (s >= 0.040 && s < 0.042 ? v * 1.5 : v)
+                * (s >= 0.050 && s < 0.054 ? v * 1.25 : v)
+                * RandomUtil.random() * 0.2 * Math.pow((v - 0.030), 4);
+            vtBuf[i] = d;
+        }
+        irBufs.push(vtBuf);
+    }
+    const impulseResponse = context.createBuffer(2, irLength, sampleRate);
+    InterpolationUtil.lerpWave(impulseResponse, irBufs);
+
+    return { whitenoise, pinknoise, cymbalnoise, impulseResponse };
+}
+
+function getNoiseSet(context, sampleRate, sampleRateVT) {
+    let set = noiseCache.get(sampleRate);
+    if (!set) {
+        set = buildNoiseSet(context, sampleRate, sampleRateVT);
+        noiseCache.set(sampleRate, set);
+    }
+    return set;
+}
+
+
 export default function init(argsObj) {
     if (this.isStarted) return;
     this.isStarted = true;
@@ -46,46 +134,11 @@ export default function init(argsObj) {
     const sampleRate = this.context.sampleRate;
     const sampleRateVT = sampleRate >= 48000 ? 48000 : sampleRate;
 
-    // Noise generation
-    const seLength = 1;
-    const sampleLength = sampleRate * seLength;
-    // ホワイトノイズ //
-    if (picoAudio && picoAudio.whitenoise) { // 使いまわし
-        this.whitenoise = picoAudio.whitenoise;
-    } else {
-        RandomUtil.resetSeed(); // 乱数パターンを固定にする（Math.random()を使わない）
-        // 再生環境のサンプルレートによって音が変わってしまうので //
-        // 一旦仮想サンプルレートで音源を作成する //
-        const sampleLengthVT = sampleRateVT * seLength;
-        const vtBufs = [];
-        for (let ch = 0; ch < 2; ch++) {
-            vtBufs.push(new Float32Array(sampleLengthVT));
-            const vtBuf = vtBufs[ch];
-            for (let i = 0; i < sampleLengthVT; i++) {
-                const r = RandomUtil.random();
-                vtBuf[i] = r * 2 - 1;
-            }
-        }
-        // 仮想サンプルレート音源を本番音源に変換する //
-        this.whitenoise = this.context.createBuffer(2, sampleLength, sampleRate);
-        InterpolationUtil.lerpWave(this.whitenoise, vtBufs);
-    }
-
-    this.pinknoise = this.context.createBuffer(2, sampleLength, sampleRate);
-    AudioUtil.fillAudioBuffer(this.pinknoise, 0, generatePinkNoise(sampleLength));
-    AudioUtil.fillAudioBuffer(this.pinknoise, 1, generatePinkNoise(sampleLength));
-
-    this.cymbalnoise = this.context.createBuffer(2, sampleLength, sampleRate);
-    AudioUtil.fillAudioBuffer(this.cymbalnoise, 0,
-        Waveform.WhiteNoise(sampleRate, 1)
-            .highPass(8000)
-            .norm().samples
-    );
-    AudioUtil.fillAudioBuffer(this.cymbalnoise, 1,
-        Waveform.WhiteNoise(sampleRate, 1)
-            .highPass(8000)
-            .norm().samples
-    );
+    // ノイズ・インパルス応答はレートごとに一度だけ生成して全インスタンスで共有する
+    const noiseSet = getNoiseSet(this.context, sampleRate, sampleRateVT);
+    this.whitenoise = (picoAudio && picoAudio.whitenoise) || noiseSet.whitenoise;
+    this.pinknoise = noiseSet.pinknoise;
+    this.cymbalnoise = noiseSet.cymbalnoise;
 
     // Fill pre-calculated vibrato samples
     const vibratoLength = Math.floor(sampleRate * 0.1);
@@ -96,35 +149,7 @@ export default function init(argsObj) {
 
     this.vibratoCache = []
 
-    // リバーブ用のインパルス応答音声データ作成（てきとう） //
-    if (picoAudio && picoAudio.impulseResponse) { // 使いまわし
-        this.impulseResponse = picoAudio.impulseResponse;
-    } else {
-        RandomUtil.resetSeed(); // 乱数パターンを固定にする（Math.random()を使わない）
-        // 再生環境のサンプルレートによって音が変わってしまうので //
-        // 一旦仮想サンプルレートで音源を作成する //
-        const seLength = 3.5;
-        const sampleLength = sampleRate * seLength;
-        const sampleLengthVT = sampleRateVT * seLength;
-        const vtBufs = [];
-        for (let ch = 0; ch < 2; ch++) {
-            vtBufs.push(new Float32Array(sampleLengthVT));
-            const vtBuf = vtBufs[ch];
-            for (let i = 0; i < sampleLengthVT; i++) {
-                const v = ((sampleLengthVT - i) / sampleLengthVT);
-                const s = i / sampleRateVT;
-                const d = (s < 0.030 ? 0 : v)
-                    * (s >= 0.030 && s < 0.031 ? v * 2 : v)
-                    * (s >= 0.040 && s < 0.042 ? v * 1.5 : v)
-                    * (s >= 0.050 && s < 0.054 ? v * 1.25 : v)
-                    * RandomUtil.random() * 0.2 * Math.pow((v - 0.030), 4);
-                vtBuf[i] = d;
-            }
-        }
-        // 仮想サンプルレート音源を本番音源に変換する //
-        this.impulseResponse = this.context.createBuffer(2, sampleLength, this.context.sampleRate);
-        InterpolationUtil.lerpWave(this.impulseResponse, vtBufs);
-    }
+    this.impulseResponse = (picoAudio && picoAudio.impulseResponse) || noiseSet.impulseResponse;
 
     // リバーブ用のAudioNode作成・接続 //
     this.convolver = this.context.createConvolver();
