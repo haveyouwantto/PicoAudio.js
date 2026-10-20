@@ -187,6 +187,14 @@ function releaseChunkBuffer(buffer) {
  *   renderSF2Note.call(this, option) -> () => void (stop function) | null
  */
 export function renderSF2Note(option) {
+    // Profiling switch, deliberately not part of the settings UI: hand the
+    // player a no-op stop function without synthesizing anything, so a profile
+    // of the main thread shows the event and scheduling side alone. A no-op
+    // (rather than null) keeps the note registered exactly as a real one, so
+    // the note bookkeeping, stop list and polyphony accounting all still run.
+    // Used by test_samples/browser/rt-profile.mjs with ?norender=1.
+    if (this.settings && this.settings.sf2NoRender) return () => {};
+
     const context = this.context;
     const font = getSF2Font();
     if (!font) return null;
