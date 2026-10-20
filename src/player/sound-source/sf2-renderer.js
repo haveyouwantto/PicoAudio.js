@@ -36,13 +36,23 @@ const SF2_MAX_TAIL_SECONDS = 30;
  * number of chunks on the main thread, so the chunk length is the granularity
  * at which this engine blocks: with 1 s chunks a single strings voice cost
  * ~0.9 ms per chunk and a 6 note pad started by rendering 3 s each (~25 ms of
- * main thread, one or two dropped frames). At 0.25 s the same note-on renders
- * 0.5 s - four times less work per block, and small enough that a render slice
- * can be stopped between chunks without overrunning the budget.
+ * main thread, one or two dropped frames). At 0.25 s a render slice can also be
+ * stopped between chunks without overrunning the budget.
  */
 const SF2_STREAM_CHUNK_SECONDS = 0.25;
-/** How much audio is synthesized synchronously at note-on (must cover the note's start time). */
-const SF2_STREAM_LEAD_SECONDS = 0.5;
+/**
+ * How much audio is synthesized synchronously at note-on. It has to cover the
+ * gap between "the note is handed to Web Audio" and "the pump has filled the
+ * queue", not the note's start time (a chunk is scheduled at an absolute time,
+ * so it does not matter how far in the future that is).
+ *
+ * This used to be 0.5 s, i.e. two chunks in one blocking call, which measured
+ * as 3.4 ms of main thread per note (p95 7.4 ms) on a 4x slowed down Chrome -
+ * by far the largest remaining cost of a note-on, and the reason dense sections
+ * dropped frames on slow machines. One chunk still leaves 250 ms of queued
+ * audio before the first pump slice can matter, and the pump starts ~3 ms later.
+ */
+const SF2_STREAM_LEAD_SECONDS = 0.25;
 // A hidden tab throttles setTimeout (background timers can be delayed by
 // seconds), so keep a bit more audio queued than the pump interval needs.
 const SF2_STREAM_LOOKAHEAD_SECONDS = 2;
@@ -121,6 +131,52 @@ function getStreamScratch(frames) {
 }
 
 /**
+ * Free list of chunk AudioBuffers.
+ *
+ * Every chunk used to be a fresh AudioBuffer: 0.25 s of stereo float32 is
+ * ~96 KB, and a dense song creates ~200 chunks per second, so the engine asked
+ * Chrome to allocate and zero ~19 MB/s. That is memory bandwidth the audio
+ * thread needs on a low end device, plus the garbage it leaves behind. A chunk
+ * buffer is free again the moment its source ends (onended), so it goes back
+ * into a small free list instead of to the GC.
+ *
+ * Buffers belong to the AudioContext that created them, so the pool is dropped
+ * wholesale when a different context shows up.
+ */
+const CHUNK_POOL_MAX_BYTES = 8 * 1024 * 1024;
+const chunkPool = new Map();
+let chunkPoolContext = null;
+let chunkPoolBytes = 0;
+
+function takeChunkBuffer(context, frames, sampleRate) {
+    if (chunkPoolContext !== context) {
+        chunkPool.clear();
+        chunkPoolBytes = 0;
+        chunkPoolContext = context;
+    }
+    const free = chunkPool.get(frames);
+    while (free && free.length) {
+        const buffer = free.pop();
+        chunkPoolBytes -= frames * 8;
+        if (buffer.sampleRate === sampleRate && buffer.numberOfChannels === 2) return buffer;
+    }
+    return context.createBuffer(2, frames, sampleRate);
+}
+
+function releaseChunkBuffer(buffer) {
+    const frames = buffer.length;
+    const bytes = frames * 8;
+    if (!bytes || chunkPoolBytes + bytes > CHUNK_POOL_MAX_BYTES) return;
+    let free = chunkPool.get(frames);
+    if (!free) {
+        free = [];
+        chunkPool.set(frames, free);
+    }
+    free.push(buffer);
+    chunkPoolBytes += bytes;
+}
+
+/**
  * Render a complete SF2 note into the audio graph.
  * Must be called with `this` = PicoAudio instance:
  *   renderSF2Note.call(this, option) -> () => void (stop function) | null
@@ -193,17 +249,12 @@ export function renderSF2Note(option) {
         })).sort((a, b) => a.frame - b.frame)
         : null);
 
-    // Shared stop gain: every note has exactly one universal mute.
-    const stopGainNode = context.createGain();
-    stopGainNode.gain.value = 1;
-    if (this.masterGainNode) {
-        stopGainNode.connect(this.masterGainNode);
-    } else if (context.destination) {
-        stopGainNode.connect(context.destination);
-    }
-
-    // Keep application output controls separate from the sampled note so
-    // expression (CC11, pre-expanded by PicoAudio) scales the complete voice.
+    // One gain node per note, carrying the application output controls and the
+    // expression curve (CC11, pre-expanded by PicoAudio), which has to scale the
+    // complete voice. It used to be two - this one into a second "universal
+    // mute" gain - which doubled the node count of the whole engine (measured
+    // 1548 GainNodes for 774 notes) for a mute that is now done by cancelling
+    // this node's automation, see the stop function below.
     const configuredGenerateVolume = this.settings && Number.isFinite(this.settings.generateVolume)
         ? this.settings.generateVolume
         : PICO_GENERATE_VOLUME_REFERENCE;
@@ -234,7 +285,11 @@ export function renderSF2Note(option) {
         });
     }
 
-    performanceGain.connect(stopGainNode);
+    if (this.masterGainNode) {
+        performanceGain.connect(this.masterGainNode);
+    } else if (context.destination) {
+        performanceGain.connect(context.destination);
+    }
 
     // --- synthesis, one chunk at a time ---------------------------------
     // tsf_note_on at frame 0, tsf_note_off at noteFrames, render until the
@@ -254,11 +309,10 @@ export function renderSF2Note(option) {
 
     // Per note nodes have to leave the graph when the note is over. Notes that
     // end on their own are only removed from the player's stop list - their
-    // stop function is never called - so without this the mixer would keep two
-    // GainNodes per note forever (measured: 2269 live nodes after 1134 notes).
+    // stop function is never called - so without this the mixer would keep a
+    // GainNode per note forever (measured: 2269 live nodes after 1134 notes).
     const releaseGraph = () => {
         try { performanceGain.disconnect(); } catch (e) { /* noop */ }
-        try { stopGainNode.disconnect(); } catch (e) { /* noop */ }
     };
 
     function scheduleChunk() {
@@ -271,7 +325,9 @@ export function renderSF2Note(option) {
             ? scratch
             : renderer.buffer.subarray(first * 2, (first + written) * 2);
 
-        const buffer = context.createBuffer(2, written, sampleRate);
+        const buffer = streaming
+            ? takeChunkBuffer(context, written, sampleRate)
+            : context.createBuffer(2, written, sampleRate);
         const left = buffer.getChannelData(0);
         const right = buffer.getChannelData(1);
         for (let i = 0, j = 0; i < written; i++) {
@@ -284,10 +340,15 @@ export function renderSF2Note(option) {
         source.connect(performanceGain);
         // The chunk that finishes the note also tears the note's graph down:
         // notes that end on their own never get their stop function called, so
-        // without this two GainNodes per note would stay in the mixer forever.
+        // without this the gain node would stay in the mixer forever. The chunk
+        // buffer goes back into the pool here, once nothing plays it any more.
         const isLastChunk = renderer.isDone();
         source.onended = () => {
-            try { source.disconnect(); source.buffer = null; } catch (e) { /* noop */ }
+            try {
+                source.disconnect();
+                source.buffer = null;
+            } catch (e) { /* noop */ }
+            if (streaming) releaseChunkBuffer(buffer);
             if (isLastChunk && !stopped) {
                 releaseGraph();
                 activeStreamers.delete(streamer);
@@ -364,7 +425,7 @@ export function renderSF2Note(option) {
     }
 
     if (sources.length === 0) {
-        try { performanceGain.disconnect(); stopGainNode.disconnect(); } catch (e) { /* noop */ }
+        releaseGraph();
         return null;
     }
 
@@ -375,14 +436,19 @@ export function renderSF2Note(option) {
         stopped = true;
         if (timer !== null) { clearTimeout(timer); timer = null; }
         activeStreamers.delete(streamer);
-        try { stopGainNode.gain.setValueAtTime(0, context.currentTime); } catch (e) { /* noop */ }
+        // Mute now and drop the expression automation that would raise the note
+        // again later - the old second gain node did the same, one node later.
+        try {
+            const now = context.currentTime;
+            performanceGain.gain.cancelScheduledValues(now);
+            performanceGain.gain.setValueAtTime(0, now);
+        } catch (e) { /* noop */ }
         for (const source of sources) {
             try { source.stop(); } catch (e) { /* noop */ }
             try { source.disconnect(); } catch (e) { /* noop */ }
         }
         sources.length = 0;
-        try { performanceGain.disconnect(); } catch (e) { /* noop */ }
-        try { stopGainNode.disconnect(); } catch (e) { /* noop */ }
+        releaseGraph();
     };
 }
 
