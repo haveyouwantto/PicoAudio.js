@@ -221,17 +221,29 @@ export function createTsfSynth(deps) {
         e.b2 = (1 - K * e.QInv + KK) * norm;
     }
 
-    function lowpassProcess(e, In) {
-        const Out = In * e.a0 + e.z1;
-        e.z1 = In * e.a1 + e.z2 - e.b1 * Out;
-        e.z2 = In * e.a0 - e.b2 * Out;
-        // C returns (float)Out here, but the value is only ever consumed by a
-        // multiply that lands in a Float32Array, so rounding it is below one ulp
-        // of the stored sample while Math.fround in the per sample path costs
-        // 8-14% of the whole render (measured). The filter state stays double,
-        // exactly like struct tsf_voice_lowpass.
-        return Out;
-    }
+    /**
+     * Scratch biquad for voiceRender().
+     *
+     * lowpassSetup() needs a struct to write into, but the per sample path
+     * cannot afford to read and write its fields: on a 64 sample block the
+     * filter state is touched 4 times per sample through 7 property accesses,
+     * and as a separate function it never got inlined (it showed up as its own
+     * 140 ms frame in a 12 s playback profile). voiceRender() copies it into
+     * locals once per block and writes it back at the end, and the loop does
+     * the arithmetic inline instead:
+     *
+     *     Out = In * a0 + z1;  z1 = In * a1 + z2 - b1 * Out;  z2 = In * a0 - b2 * Out;
+     *
+     * C returns (float)Out there, but the value is only ever consumed by a
+     * multiply that lands in a Float32Array, so rounding it is below one ulp of
+     * the stored sample while Math.fround in the per sample path costs 8-14% of
+     * the whole render (measured). The filter state stays double, exactly like
+     * struct tsf_voice_lowpass.
+     *
+     * Shared, not per voice: voiceRender() does not re-enter, and the fields
+     * are only alive inside one call.
+     */
+    const lowpassScratch = { QInv: 0, a0: 0, a1: 0, b1: 0, b2: 0, z1: 0, z2: 0, active: false };
 
     /* ----------------------------------------------------------------- LFO -- */
 
@@ -257,6 +269,10 @@ export function createTsfSynth(deps) {
         if (pitchShift) adjustedPitch += pitchShift;
         v.pitchInputTimecents = adjustedPitch * 100.0;
         v.pitchOutputFactor = region.sampleRate / (tsfTimecents2Secs(region.pitchKeycenter * 100.0) * outSampleRate);
+        // The step the sample loop adds per output sample. It only changes here
+        // (note-on and each pitch wheel move), so it is kept on the voice
+        // instead of being recomputed with a pow() in every 64 sample block.
+        v.pitchRatio = tsfTimecents2Secs(v.pitchInputTimecents) * v.pitchOutputFactor;
     }
 
     /**
@@ -290,6 +306,11 @@ export function createTsfSynth(deps) {
                 playingKey: key,
                 region,
                 noteGainDB: f32(font.globalGainDB - region.attenuation - tsfGainToDecibels(1.0 / vel)),
+                // Filled in below, but declared here so every voice keeps the
+                // same hidden class (adding them later made the per block loads
+                // in voiceRender a shape transition instead of a fixed offset).
+                noteGain: 0,
+                pitchRatio: 0,
                 pitchInputTimecents: 0,
                 pitchOutputFactor: 0,
                 sourceSamplePosition: 0,
@@ -305,6 +326,9 @@ export function createTsfSynth(deps) {
             };
 
             calcPitchRatio(voice, 0, font.outSampleRate);
+            // Region gain, converted once: tsfDecibelsToGain() is a pow() and the
+            // value never changes over the life of the voice (see voiceRender).
+            voice.noteGain = tsfDecibelsToGain(voice.noteGainDB);
             // 3 dB pan law, matching the reference (sqrt curve).
             voice.panFactorLeft = f32(Math.sqrt(0.5 - region.pan));
             voice.panFactorRight = f32(Math.sqrt(0.5 + region.pan));
@@ -374,15 +398,23 @@ export function createTsfSynth(deps) {
         const input = font.samples;
         let outIdx = offset * 2;
 
-    const updateModEnv = q.modEnv !== false && !!(region.modEnvToPitch || region.modEnvToFilterFc);
+        const updateModEnv = q.modEnv !== false && !!(region.modEnvToPitch || region.modEnvToFilterFc);
         const updateModLFO = !!(v.modlfo.delta && (region.modLfoToPitch || region.modLfoToFilterFc || region.modLfoToVolume));
         const updateVibLFO = !!(v.viblfo.delta && region.vibLfoToPitch);
         const isLooping = (v.loopStart < v.loopEnd);
         const tmpLoopStart = v.loopStart, tmpLoopEnd = v.loopEnd;
+        const loopLen = tmpLoopEnd - tmpLoopStart + 1.0;
         const tmpSampleEndDbl = region.end;
         const tmpLoopEndDbl = tmpLoopEnd + 1.0;
         let tmpSourceSamplePosition = v.sourceSamplePosition;
-        const tmpLowpass = { ...v.lowpass };
+
+        // The biquad lives in locals for the whole call (see lowpassScratch):
+        // the per sample path below only does arithmetic, no property access.
+        const lp = lowpassScratch;
+        lp.QInv = v.lowpass.QInv;
+        let lpActive = v.lowpass.active;
+        let a0 = v.lowpass.a0, a1 = v.lowpass.a1, b1 = v.lowpass.b1, b2 = v.lowpass.b2;
+        let z1 = v.lowpass.z1, z2 = v.lowpass.z2;
 
         const dynamicLowpass = !!(region.modLfoToFilterFc || region.modEnvToFilterFc);
         const tmpSampleRate = font.outSampleRate;
@@ -403,12 +435,16 @@ export function createTsfSynth(deps) {
             tmpVibLfoToPitch = region.vibLfoToPitch;
             tmpModEnvToPitch = region.modEnvToPitch;
         } else {
-            pitchRatio = tsfTimecents2Secs(v.pitchInputTimecents) * v.pitchOutputFactor;
+            // Cached on the voice by calcPitchRatio(): it only changes when the
+            // pitch does, so the pow() does not belong in a 64 sample block.
+            pitchRatio = v.pitchRatio !== undefined
+                ? v.pitchRatio
+                : tsfTimecents2Secs(v.pitchInputTimecents) * v.pitchOutputFactor;
         }
         if (dynamicGain) {
             tmpModLfoToVolume = region.modLfoToVolume * 0.1;
         } else {
-            noteGain = tsfDecibelsToGain(v.noteGainDB);
+            noteGain = v.noteGain !== undefined ? v.noteGain : tsfDecibelsToGain(v.noteGainDB);
         }
 
         while (numSamples > 0) {
@@ -418,8 +454,11 @@ export function createTsfSynth(deps) {
             if (dynamicLowpass) {
                 const fres = tmpInitialFilterFc + v.modlfo.level * tmpModLfoToFilterFc + v.modenv.level * tmpModEnvToFilterFc;
                 const lowpassFc = (fres <= 13500 ? tsfCents2Hertz(fres) / tmpSampleRate : 1.0);
-                tmpLowpass.active = (lowpassFc < 0.499);
-                if (tmpLowpass.active) lowpassSetup(tmpLowpass, lowpassFc);
+                lpActive = (lowpassFc < 0.499);
+                if (lpActive) {
+                    lowpassSetup(lp, lowpassFc);
+                    a0 = lp.a0; a1 = lp.a1; b1 = lp.b1; b2 = lp.b2;
+                }
             }
 
             if (dynamicPitchRatio) {
@@ -447,61 +486,114 @@ export function createTsfSynth(deps) {
             const gainLeft = f32(gainMono * v.panFactorLeft);
             const gainRight = f32(gainMono * v.panFactorRight);
 
-            // The sample loop is duplicated per interpolation mode so the hot path
-            // stays branch free; only one of the three ever runs.
+            // The sample loop is duplicated per interpolation mode *and* per
+            // filter state, so a block runs one loop whose body has no branch
+            // in it. Both choices are fixed for the whole block (dynamicLowpass
+            // is the only thing that can change the filter, and it only does so
+            // here), and keeping the filter out of the body is not cosmetic:
+            // with the branch inside, the nearest path measured 25% slower than
+            // the linear one, which it should not be.
             if (interp === TSF_INTERP_NEAREST) {
-                while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
-                    let val = input[Math.trunc(tmpSourceSamplePosition)];
+                if (lpActive) {
+                    while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
+                        const inVal = input[Math.trunc(tmpSourceSamplePosition)];
+                        const o = inVal * a0 + z1;
+                        const nz1 = inVal * a1 + z2 - b1 * o;
+                        z2 = inVal * a0 - b2 * o;
+                        z1 = nz1;
 
-                    if (tmpLowpass.active) val = lowpassProcess(tmpLowpass, val);
+                        out[outIdx++] += o * gainLeft;
+                        out[outIdx++] += o * gainRight;
 
-                    out[outIdx++] += val * gainLeft;
-                    out[outIdx++] += val * gainRight;
+                        tmpSourceSamplePosition += pitchRatio;
+                        if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
+                            tmpSourceSamplePosition -= loopLen;
+                        }
+                    }
+                } else {
+                    while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
+                        const val = input[Math.trunc(tmpSourceSamplePosition)];
 
-                    tmpSourceSamplePosition += pitchRatio;
-                    if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
-                        tmpSourceSamplePosition -= (tmpLoopEnd - tmpLoopStart + 1.0);
+                        out[outIdx++] += val * gainLeft;
+                        out[outIdx++] += val * gainRight;
+
+                        tmpSourceSamplePosition += pitchRatio;
+                        if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
+                            tmpSourceSamplePosition -= loopLen;
+                        }
                     }
                 }
             } else if (interp === TSF_INTERP_CUBIC) {
-                const loopLen = tmpLoopEnd - tmpLoopStart + 1.0;
                 const lastSample = tmpSampleEndDbl - 1;
-                while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
-                    const pos = Math.trunc(tmpSourceSamplePosition);
-                    // Neighbours, wrapped into the loop when the font loops.
-                    const i1 = pos;
-                    let i2 = (isLooping && pos + 1 > tmpLoopEnd ? pos + 1 - loopLen : pos + 1);
-                    let i0 = pos - 1;
-                    let i3 = pos + 2;
-                    if (isLooping) {
-                        if (pos === tmpLoopStart) i0 = tmpLoopEnd;
-                        if (i3 > tmpLoopEnd) i3 -= loopLen;
+                if (lpActive) {
+                    while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
+                        const pos = Math.trunc(tmpSourceSamplePosition);
+                        // Neighbours, wrapped into the loop when the font loops.
+                        const i1 = pos;
+                        let i2 = (isLooping && pos + 1 > tmpLoopEnd ? pos + 1 - loopLen : pos + 1);
+                        let i0 = pos - 1;
+                        let i3 = pos + 2;
+                        if (isLooping) {
+                            if (pos === tmpLoopStart) i0 = tmpLoopEnd;
+                            if (i3 > tmpLoopEnd) i3 -= loopLen;
+                        }
+                        if (i0 < 0) i0 = 0;
+                        if (i2 > lastSample) i2 = lastSample;
+                        if (i3 > lastSample) i3 = lastSample;
+
+                        // Catmull-Rom.
+                        const alpha = f32(tmpSourceSamplePosition - pos);
+                        const y0 = input[i0], y1 = input[i1], y2 = input[i2], y3 = input[i3];
+                        const inVal = 0.5 * ((2 * y1)
+                            + (-y0 + y2) * alpha
+                            + (2 * y0 - 5 * y1 + 4 * y2 - y3) * alpha * alpha
+                            + (-y0 + 3 * y1 - 3 * y2 + y3) * alpha * alpha * alpha);
+                        const o = inVal * a0 + z1;
+                        const nz1 = inVal * a1 + z2 - b1 * o;
+                        z2 = inVal * a0 - b2 * o;
+                        z1 = nz1;
+                        const val = f32(o);
+
+                        out[outIdx++] += val * gainLeft;
+                        out[outIdx++] += val * gainRight;
+
+                        tmpSourceSamplePosition += pitchRatio;
+                        if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
+                            tmpSourceSamplePosition -= loopLen;
+                        }
                     }
-                    if (i0 < 0) i0 = 0;
-                    if (i2 > lastSample) i2 = lastSample;
-                    if (i3 > lastSample) i3 = lastSample;
+                } else {
+                    while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
+                        const pos = Math.trunc(tmpSourceSamplePosition);
+                        const i1 = pos;
+                        let i2 = (isLooping && pos + 1 > tmpLoopEnd ? pos + 1 - loopLen : pos + 1);
+                        let i0 = pos - 1;
+                        let i3 = pos + 2;
+                        if (isLooping) {
+                            if (pos === tmpLoopStart) i0 = tmpLoopEnd;
+                            if (i3 > tmpLoopEnd) i3 -= loopLen;
+                        }
+                        if (i0 < 0) i0 = 0;
+                        if (i2 > lastSample) i2 = lastSample;
+                        if (i3 > lastSample) i3 = lastSample;
 
-                    // Catmull-Rom.
-                    const alpha = f32(tmpSourceSamplePosition - pos);
-                    const y0 = input[i0], y1 = input[i1], y2 = input[i2], y3 = input[i3];
-                    let val = 0.5 * ((2 * y1)
-                        + (-y0 + y2) * alpha
-                        + (2 * y0 - 5 * y1 + 4 * y2 - y3) * alpha * alpha
-                        + (-y0 + 3 * y1 - 3 * y2 + y3) * alpha * alpha * alpha);
+                        const alpha = f32(tmpSourceSamplePosition - pos);
+                        const y0 = input[i0], y1 = input[i1], y2 = input[i2], y3 = input[i3];
+                        const val = f32(0.5 * ((2 * y1)
+                            + (-y0 + y2) * alpha
+                            + (2 * y0 - 5 * y1 + 4 * y2 - y3) * alpha * alpha
+                            + (-y0 + 3 * y1 - 3 * y2 + y3) * alpha * alpha * alpha));
 
-                    // Low-pass filter.
-                    if (tmpLowpass.active) val = lowpassProcess(tmpLowpass, val);
-                    val = f32(val);
+                        out[outIdx++] += val * gainLeft;
+                        out[outIdx++] += val * gainRight;
 
-                    out[outIdx++] += val * gainLeft;
-                    out[outIdx++] += val * gainRight;
-
-                    tmpSourceSamplePosition += pitchRatio;
-                    if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
-                        tmpSourceSamplePosition -= loopLen;
+                        tmpSourceSamplePosition += pitchRatio;
+                        if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
+                            tmpSourceSamplePosition -= loopLen;
+                        }
                     }
                 }
-            } else {
+            } else if (lpActive) {
                 while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
                     const pos = Math.trunc(tmpSourceSamplePosition);
                     const nextPos = (pos >= tmpLoopEnd && isLooping ? tmpLoopStart : pos + 1);
@@ -511,18 +603,34 @@ export function createTsfSynth(deps) {
                     // once into the output buffer measures the same against the
                     // reference (worst case 2.5e-6) and renders 8-14% faster.
                     const alpha = (tmpSourceSamplePosition - pos);
-                    let val = (input[pos] * (1.0 - alpha) + input[nextPos] * alpha);
+                    const inVal = (input[pos] * (1.0 - alpha) + input[nextPos] * alpha);
+                    const o = inVal * a0 + z1;
+                    const nz1 = inVal * a1 + z2 - b1 * o;
+                    z2 = inVal * a0 - b2 * o;
+                    z1 = nz1;
 
-                    // Low-pass filter.
-                    if (tmpLowpass.active) val = lowpassProcess(tmpLowpass, val);
-
-                    out[outIdx++] += val * gainLeft;
-                    out[outIdx++] += val * gainRight;
+                    out[outIdx++] += o * gainLeft;
+                    out[outIdx++] += o * gainRight;
 
                     // Next sample.
                     tmpSourceSamplePosition += pitchRatio;
                     if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
-                        tmpSourceSamplePosition -= (tmpLoopEnd - tmpLoopStart + 1.0);
+                        tmpSourceSamplePosition -= loopLen;
+                    }
+                }
+            } else {
+                while (blockSamples-- > 0 && tmpSourceSamplePosition < tmpSampleEndDbl) {
+                    const pos = Math.trunc(tmpSourceSamplePosition);
+                    const nextPos = (pos >= tmpLoopEnd && isLooping ? tmpLoopStart : pos + 1);
+                    const alpha = (tmpSourceSamplePosition - pos);
+                    const val = (input[pos] * (1.0 - alpha) + input[nextPos] * alpha);
+
+                    out[outIdx++] += val * gainLeft;
+                    out[outIdx++] += val * gainRight;
+
+                    tmpSourceSamplePosition += pitchRatio;
+                    if (tmpSourceSamplePosition >= tmpLoopEndDbl && isLooping) {
+                        tmpSourceSamplePosition -= loopLen;
                     }
                 }
             }
@@ -534,7 +642,15 @@ export function createTsfSynth(deps) {
         }
 
         v.sourceSamplePosition = tmpSourceSamplePosition;
-        if (tmpLowpass.active || dynamicLowpass) v.lowpass = tmpLowpass;
+        if (lpActive || dynamicLowpass) {
+            v.lowpass.active = lpActive;
+            v.lowpass.a0 = a0;
+            v.lowpass.a1 = a1;
+            v.lowpass.b1 = b1;
+            v.lowpass.b2 = b2;
+            v.lowpass.z1 = z1;
+            v.lowpass.z2 = z2;
+        }
     }
 
     /**
@@ -560,7 +676,9 @@ export function createTsfSynth(deps) {
         // most notes are short (drums, plucks) so a tight "note length + release"
         // estimate over-allocates and the extra zero fill costs more than the
         // reallocations it saves. Keep the small seed plus geometric growth.
-        let out = new Float32Array(8192 * 2);
+        // It is created on the first render that has no target buffer - the
+        // streaming path never allocates one at all.
+        let out = null;
         let written = 0;
         let released = false;
         let bendIndex = 0;
@@ -643,9 +761,12 @@ export function createTsfSynth(deps) {
                     const block = Math.min(
                         TSF_RENDER_EFFECTSAMPLEBLOCK - (written % TSF_RENDER_EFFECTSAMPLEBLOCK),
                         limit - written);
-                    if (!target && (written + block) * 2 > out.length) {
-                        const grown = new Float32Array(Math.max(out.length * 2, (written + block) * 2));
-                        grown.set(out.subarray(0, written * 2));
+                    if (!target && (!out || (written + block) * 2 > out.length)) {
+                        // Allocated on first use: streaming renders every chunk
+                        // into the caller's buffer and never touches this one, and
+                        // a 64 KB seed per note is real garbage at 50 notes/s.
+                        const grown = new Float32Array(Math.max(out ? out.length * 2 : 8192 * 2, (written + block) * 2));
+                        if (out) grown.set(out.subarray(0, written * 2));
                         out = grown;
                     }
                     // taken after the possible growth, so the block lands in the
@@ -675,7 +796,10 @@ export function createTsfSynth(deps) {
         const renderer = createNoteRenderer(
             font, presetIndex, key, vel, noteOffFrames, maxFrames, pitchBends, panChanges, interpolation);
         renderer.render(maxFrames);
-        return { data: renderer.buffer.subarray(0, renderer.frames * 2), frames: renderer.frames };
+        // A note with no matching region renders nothing and leaves the buffer
+        // unallocated, so hand back an empty view instead of null.
+        const frames = renderer.frames;
+        return { data: frames ? renderer.buffer.subarray(0, frames * 2) : new Float32Array(0), frames };
     }
 
     return {
