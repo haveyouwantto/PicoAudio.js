@@ -287,31 +287,45 @@ export function renderSF2Note(option) {
     const midiExpression = Number.isFinite(option.midiExpression) ? option.midiExpression : 127;
     const channelGain = (expression01) => Math.pow(midiVolume * expression01, 3);
 
-    const performanceGain = context.createGain();
+    // Output level, as a step curve the note's own samples carry.
+    //
+    // This used to be a GainNode per note holding the application output
+    // controls and the CC11 expression curve. The samples are copied one by one
+    // into the chunk buffer anyway, so the same curve is applied there: one
+    // node less for every note (which is what a dense song allocates thousands
+    // of times a second), no AudioParam automation, and bit-identical output
+    // because the reference applies expression as steps too.
     const expression = option.expression && option.expression.length ? option.expression : null;
     const initialExpression = expression ? expression[0].value / 127 : midiExpression / 127;
-    performanceGain.gain.setValueAtTime(userGain * channelGain(initialExpression), start);
+    const gainPoints = [{ frame: 0, gain: userGain * channelGain(initialExpression) }];
     if (expression) {
         expression.forEach((point) => {
             const time = Math.max(0, point.time + songStartTime + baseLatency);
-            performanceGain.gain.setValueAtTime(userGain * channelGain(point.value / 127), time);
+            gainPoints.push({
+                frame: Math.max(0, Math.round((time - start) * sampleRate)),
+                gain: userGain * channelGain(point.value / 127),
+            });
         });
+        gainPoints.sort((a, b) => a.frame - b.frame);
     }
+    let gainIndex = 0;
+    let gainNow = gainPoints[0].gain;
 
-    if (this.masterGainNode) {
-        performanceGain.connect(this.masterGainNode);
-    } else if (context.destination) {
-        performanceGain.connect(context.destination);
-    }
+    const outputNode = this.masterGainNode || context.destination;
 
     // --- synthesis, one chunk at a time ---------------------------------
     // tsf_note_on at frame 0, tsf_note_off at noteFrames, render until the
     // voices die or the tail cap is reached.
+    //
+    // There is no whole-note render any more. A note carries up to
+    // SF2_MAX_TAIL_SECONDS of release, so rendering it in one go is ~10 MB of
+    // stereo buffer and a main-thread stall of hundreds of ms; the only thing
+    // that ever wanted it was the offline case, and offline can drain the same
+    // chunks instead of asking for a different size. So: one chunk size, one
+    // code path, and the only thing that differs between realtime and offline
+    // is who drives the loop (see the priming block below).
     const isOffline = typeof OfflineAudioContext !== 'undefined' && context instanceof OfflineAudioContext;
-    const streaming = !isOffline && !(this.settings && this.settings.sf2Streaming === false);
-    const chunkFrames = streaming
-        ? Math.max(1024, Math.round(SF2_STREAM_CHUNK_SECONDS * sampleRate))
-        : maxFrames;
+    const chunkFrames = Math.max(1024, Math.round(SF2_STREAM_CHUNK_SECONDS * sampleRate));
     const renderer = createNoteRenderer(
         font, presetIndex, option.pitch, velocity / 127, noteFrames, maxFrames, pitchBends, panChanges, interpolation);
 
@@ -320,23 +334,12 @@ export function renderSF2Note(option) {
     let stopped = false;
     let timer = null;
 
-    // Per note nodes have to leave the graph when the note is over. Notes that
-    // end on their own are only removed from the player's stop list - their
-    // stop function is never called - so without this the mixer would keep a
-    // GainNode per note forever (measured: 2269 live nodes after 1134 notes).
-    const releaseGraph = () => {
-        try { performanceGain.disconnect(); } catch (e) { /* noop */ }
-    };
-
     function scheduleChunk() {
         if (stopped) return false;
-        const first = renderer.frames;
-        const scratch = streaming ? getStreamScratch(chunkFrames) : null;
+        const scratch = getStreamScratch(chunkFrames);
         const written = renderer.render(chunkFrames, scratch);
         if (!written) return false;
-        const data = scratch
-            ? scratch
-            : renderer.buffer.subarray(first * 2, (first + written) * 2);
+        const data = scratch;
 
         // Every streaming chunk is a full length buffer, even the one that ends
         // a note. A 0.25 s chunk is always the same size; a note's last chunk is
@@ -348,16 +351,21 @@ export function renderSF2Note(option) {
         // the whole engine on one size class - the same song now allocates 14 KB
         // per note, all of it while the pool is still filling. The extra frames
         // are silence.
-        const buffer = streaming
-            ? takeChunkBuffer(context, chunkFrames, sampleRate)
-            : context.createBuffer(2, written, sampleRate);
+        const buffer = takeChunkBuffer(context, chunkFrames, sampleRate);
         const left = buffer.getChannelData(0);
         const right = buffer.getChannelData(1);
-        for (let i = 0, j = 0; i < written; i++) {
-            left[i] = data[j++];
-            right[i] = data[j++];
+        // Apply the note's output/expression curve while copying. Stepwise, in
+        // note frames, exactly like the AudioParam calls it replaces.
+        let frame = scheduledFrames;
+        for (let i = 0, j = 0; i < written; i++, frame++) {
+            while (gainIndex + 1 < gainPoints.length && gainPoints[gainIndex + 1].frame <= frame) {
+                gainIndex++;
+                gainNow = gainPoints[gainIndex].gain;
+            }
+            left[i] = data[j++] * gainNow;
+            right[i] = data[j++] * gainNow;
         }
-        if (streaming && written < chunkFrames) {
+        if (written < chunkFrames) {
             // the reused buffer still holds the previous chunk's samples
             left.fill(0, written);
             right.fill(0, written);
@@ -365,20 +373,18 @@ export function renderSF2Note(option) {
 
         const source = context.createBufferSource();
         source.buffer = buffer;
-        source.connect(performanceGain);
-        // The chunk that finishes the note also tears the note's graph down:
-        // notes that end on their own never get their stop function called, so
-        // without this the gain node would stay in the mixer forever. The chunk
-        // buffer goes back into the pool here, once nothing plays it any more.
+        source.connect(outputNode);
+        // The chunk buffer goes back into the pool once nothing plays it any
+        // more; the note has no other node to release, the source is the whole
+        // of its output stage.
         const isLastChunk = renderer.isDone();
         source.onended = () => {
             // disconnect() takes the source out of the graph, which is what
             // frees it (and its buffer). Assigning null to source.buffer is not
             // supported by Chrome and warns once per chunk.
             try { source.disconnect(); } catch (e) { /* noop */ }
-            if (streaming) releaseChunkBuffer(buffer);
+            releaseChunkBuffer(buffer);
             if (isLastChunk && !stopped) {
-                releaseGraph();
                 activeStreamers.delete(streamer);
             }
         };
@@ -434,7 +440,14 @@ export function renderSF2Note(option) {
         },
     };
 
-    if (streaming) {
+    if (isOffline) {
+        // Offline: there is no clock to come back on, and startRendering()
+        // renders the graph in one go after this call returns, so every chunk
+        // has to be scheduled now. Still the same chunks, just drained.
+        while (!renderer.isDone()) {
+            if (!scheduleChunk()) break;
+        }
+    } else {
         activeStreamers.add(streamer);
         // Bounded start-up cost: only the first chunks are synthesized now.
         for (let i = 0; i < SF2_STREAM_LEAD_CHUNKS && !renderer.isDone(); i++) {
@@ -445,38 +458,27 @@ export function renderSF2Note(option) {
             pumpNotBefore = performance.now() + SF2_STREAM_SLICE_GAP_MS;
             timer = setTimeout(pump, 0);
         }
-    } else {
-        // Offline rendering: everything must be scheduled before startRendering().
-        while (!renderer.isDone()) {
-            if (!scheduleChunk()) break;
-        }
     }
 
     if (sources.length === 0) {
-        releaseGraph();
         return null;
     }
 
     // The rendered chunks already contain the release, so there is nothing to
     // schedule at note-off; this is the universal mute for the stop manager
     // (song stop / note stealing) plus cancelling any pending synthesis.
+    // Stopping the sources is the mute: the note has no gain stage of its own
+    // any more, and a buffer source stops at the scheduled time, so this is as
+    // immediate as cancelling an AudioParam and needs no node.
     return () => {
         stopped = true;
         if (timer !== null) { clearTimeout(timer); timer = null; }
         activeStreamers.delete(streamer);
-        // Mute now and drop the expression automation that would raise the note
-        // again later - the old second gain node did the same, one node later.
-        try {
-            const now = context.currentTime;
-            performanceGain.gain.cancelScheduledValues(now);
-            performanceGain.gain.setValueAtTime(0, now);
-        } catch (e) { /* noop */ }
         for (const source of sources) {
             try { source.stop(); } catch (e) { /* noop */ }
             try { source.disconnect(); } catch (e) { /* noop */ }
         }
         sources.length = 0;
-        releaseGraph();
     };
 }
 

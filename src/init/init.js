@@ -3,7 +3,6 @@ import InterpolationUtil from '../util/interpolation-util.js';
 import { generatePinkNoise } from '../player/audio/sound-gen.js';
 import AudioUtil from '../util/audio-util.js';
 import Waveform from '../player/audio/dsp.js';
-import { flushSF2Streaming } from '../player/sound-source/sf2-renderer.js';
 import { prepareSF2Worklet } from '../player/sound-source/sf2-worklet-renderer.js';
 import { HAS_SF2 } from '../features.js';
 
@@ -106,16 +105,13 @@ export default function init(argsObj) {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     this.context = audioContext ? audioContext : new AudioContext({ latencyHint: "balanced" });
 
-    // バックグラウンドのタブはタイマーが間引かれるため、SF2 のストリーミング合成
-    // （残りを少しずつ合成する方式）では音が途切れうる。非表示になったら、
-    // 再生中の音符の残りをその場で全て合成し、以降の音符は一括合成に切り替える。
-    if (HAS_SF2 && typeof document !== 'undefined' && document.addEventListener) {
-        document.addEventListener('visibilitychange', () => {
-            const hidden = document.visibilityState === 'hidden';
-            this.settings.sf2Streaming = !hidden;
-            if (hidden) flushSF2Streaming();
-        });
-    }
+    // A hidden tab throttles timers, which used to be worked around by
+    // finishing every sounding note on the spot and switching the engine to
+    // whole-note renders. Neither exists any more: whole-note rendering was
+    // removed (see the note in sf2-renderer.js) and the AudioWorklet does not
+    // depend on timers at all. What is left is the honest trade - a background
+    // tab may drop DSP-streamed notes instead of freezing the page to fill
+    // their buffers.
 
     // マスターボリューム //
     // リアルタイムで音量変更するためにdestination前にgainNodeを一つ噛ませる
