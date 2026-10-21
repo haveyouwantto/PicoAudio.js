@@ -2,6 +2,27 @@ import ArrayUtil from '../../util/array-util.js';
 import ParseUtil from '../../util/parse-util.js';
 import {Performance} from '../../util/ponyfill.js';
 
+/**
+ * A gap between two scheduler callbacks this long is not load, it is the main
+ * thread having been stopped (GC, a long task, a frozen or hidden tab). The
+ * callback normally runs every 4 ms.
+ *
+ * The audio clock cannot stop with it: AudioContext.currentTime keeps counting
+ * rendered quanta while nothing is being scheduled. Measured on a 1500 ms
+ * freeze: the song position jumped the full 1.5 s and the 421 notes of that
+ * window were all handed to the engine at once with their start times already
+ * in the past - which the player hears as the song fast-forwarding over a chord.
+ */
+const STALL_GAP_MS = 400;
+
+/**
+ * How far the song clock may run ahead of our own clock within one callback
+ * before it is treated as a jump rather than as jitter. A callback covers
+ * ~4 ms, so anything this large came from the context, not from us: the same
+ * "position advanced without us" problem, arriving while we were awake.
+ */
+const CLOCK_JUMP_MS = 200;
+
 export default class UpdateNote {
     /**
      * 1ms毎処理用の変数を初期化
@@ -37,9 +58,19 @@ export default class UpdateNote {
         // サウンドが重くないか監視（フリーズ対策） //
         //   performance.now()とAudioContext.currentTimeの時間差を計算し
         //   AudioContext.currentTimeが遅れていたら処理落ちしていると判断する
-        let updateBufTime = updateNowTime - updatePreTime;
         const pTime = updateNowTime;
         const cTime = context.currentTime * 1000;
+        const wallGap = pTime - updatePreTime;   // こちらの時計が進んだ分
+        const audioGap = cTime - cPreTime;       // 曲の時計が進んだ分
+
+        // 曲の時計が、こちらが関与しないうちに進んでいたら戻す //
+        let updateBufTime = wallGap;
+        if (states.isPlaying && !settings.isWebMIDI
+            && (wallGap >= STALL_GAP_MS || audioGap - wallGap >= CLOCK_JUMP_MS)) {
+            this.recoverFromStall(picoAudio, audioGap);
+            // 止まった時間を先読みの材料にしない（一気に予約が増えてしまう）
+            updateBufTime = states.updateIntervalTime || 4;
+        }
         pTimeSum += pTime - pPreTime;
         cTimeSum += cTime - cPreTime;
         pPreTime = pTime;
@@ -247,6 +278,41 @@ export default class UpdateNote {
         this.pTimeSum = pTimeSum;
         this.cTimeSum = cTimeSum;
         this.cnt = cnt;
+    }
+
+    /**
+     * 曲の時計が進んでしまった分だけ startTime を後ろへずらし、鳴っている音を
+     * 止めて、その位置から鳴らし直す。
+     *
+     * 止まっている間も AudioContext.currentTime は進み続けるので、そのまま
+     * 再開すると曲が飛んだように聞こえる（実測 1.5 s 停止で位置が 1.5 s 飛び、
+     * その区間の 421 音が「もう始まっている」状態で一斉に鳴った）。startTime を
+     * ずらせば位置は戻り、以降の音符も新しい時計で予約される。
+     */
+    static recoverFromStall(picoAudio, shiftMs) {
+        const states = picoAudio.states;
+        if (!(shiftMs > 0)) return;
+        states.startTime += shiftMs / 1000;
+
+        // 鳴っている音だけ止める（stopFuncs には曲終了タイマーなども入っている）
+        for (let i = states.stopFuncs.length - 1; i >= 0; i--) {
+            const entry = states.stopFuncs[i];
+            if (!entry.note) continue;
+            try { entry.stopFunc(); } catch (e) { /* noop */ }
+            ArrayUtil.delete(states.stopFuncs, i);
+        }
+        states.noteOnAry.length = 0;
+        states.noteOffAry.length = 0;
+
+        // 止まる直前に先読みで予約した音符は古い時計で鳴る予定だったので、
+        // ずらした位置まで戻して予約し直す（先読み分＝数十ノート）。
+        const pos = picoAudio.context.currentTime - states.startTime;
+        for (let ch = 0; ch < 16; ch++) {
+            const notes = picoAudio.playData.channels[ch].notes;
+            let idx = states.playIndices[ch];
+            while (idx > 0 && notes[idx - 1].startTime >= pos) idx--;
+            states.playIndices[ch] = idx;
+        }
     }
 
     /**
