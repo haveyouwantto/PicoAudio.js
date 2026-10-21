@@ -294,11 +294,6 @@ class PicoAudio {
         return true;
     }
 
-    /** True once settings.sf2Engine = 'worklet' can take notes. */
-    isSF2WorkletReady() {
-        return HAS_SF2 ? isSF2WorkletReady(this.context) : false;
-    }
-
     isSF2Loaded() {
         if (!HAS_SF2) return false;
         return isSF2Loaded();
