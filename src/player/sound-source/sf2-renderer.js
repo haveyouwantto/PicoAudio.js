@@ -262,12 +262,7 @@ export function renderSF2Note(option) {
         })).sort((a, b) => a.frame - b.frame)
         : null);
 
-    // One gain node per note, carrying the application output controls and the
-    // expression curve (CC11, pre-expanded by PicoAudio), which has to scale the
-    // complete voice. It used to be two - this one into a second "universal
-    // mute" gain - which doubled the node count of the whole engine (measured
-    // 1548 GainNodes for 774 notes) for a mute that is now done by cancelling
-    // this node's automation, see the stop function below.
+    // Output level: application volume x channel volume.
     const configuredGenerateVolume = this.settings && Number.isFinite(this.settings.generateVolume)
         ? this.settings.generateVolume
         : PICO_GENERATE_VOLUME_REFERENCE;
@@ -293,8 +288,11 @@ export function renderSF2Note(option) {
     // controls and the CC11 expression curve. The samples are copied one by one
     // into the chunk buffer anyway, so the same curve is applied there: one
     // node less for every note (which is what a dense song allocates thousands
-    // of times a second), no AudioParam automation, and bit-identical output
-    // because the reference applies expression as steps too.
+    // of times a second), no AudioParam automation, and the same stepwise shape
+    // the AudioParam calls produced.
+    //
+    // expression is pre-expanded by the SMF parser, which pushes CC11 in file
+    // order, so the frames below are already ascending.
     const expression = option.expression && option.expression.length ? option.expression : null;
     const initialExpression = expression ? expression[0].value / 127 : midiExpression / 127;
     const gainPoints = [{ frame: 0, gain: userGain * channelGain(initialExpression) }];
@@ -306,7 +304,6 @@ export function renderSF2Note(option) {
                 gain: userGain * channelGain(point.value / 127),
             });
         });
-        gainPoints.sort((a, b) => a.frame - b.frame);
     }
     let gainIndex = 0;
     let gainNow = gainPoints[0].gain;
